@@ -1,21 +1,20 @@
-name: nxnative IPA Build Test
+name: Build Pokémon Z-A IPA
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-test:
+  build:
     runs-on: macos-14
 
     steps:
-      - name: Checkout
+      - name: Checkout nxnative
         uses: actions/checkout@v4
 
-      - name: Show Mac environment
+      - name: Show environment
         run: |
           sw_vers
           uname -m
-          xcodebuild -version
           df -h
 
       - name: Install dependencies
@@ -28,11 +27,11 @@ jobs:
           python3 -m pip install --user --break-system-packages \
             lz4 capstone fonttools "backports.zstd; python_version < '3.14'"
 
-      - name: Check nxnative packer
+      - name: Verify Z-A profile
+        run: |
+          test -d dm/games/0100F43008C44000
+          echo "Pokémon Legends: Z-A profile found"
+
+      - name: Check packer
         run: |
           python3 scripts/build_ipa_from_nsp.py --help
-
-      - name: Check IPA builder
-        run: |
-          test -x dm/ios/tools/build_ipa.sh
-          echo "IPA builder is ready"
