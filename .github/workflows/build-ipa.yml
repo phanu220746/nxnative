@@ -1,0 +1,35 @@
+name: nxnative macOS Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-macos:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show environment
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          python3 --version
+          brew --version
+
+      - name: Install dependencies
+        run: |
+          brew install xcodegen zstd spirv-cross glslang
+          brew install --cask dotnet-sdk
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --user --break-system-packages lz4 capstone fonttools
+
+      - name: Verify nxnative
+        run: |
+          python3 -m py_compile scripts/build_ipa_from_nsp.py
+          test -f dm/ios/tools/build_ipa.sh
+          echo "nxnative build environment is ready"
