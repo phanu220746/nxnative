@@ -1,0 +1,111 @@
+
+name: Storm 4 - Survey Game Profile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  survey:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout NXNative
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            gdown \
+            lz4 \
+            "capstone>=5,<6" \
+            fonttools \
+            backports.zstd
+
+      - name: Prepare prod.keys
+        env:
+          PROD_KEYS: ${{ secrets.PROD_KEYS }}
+        run: |
+          if [ -z "$PROD_KEYS" ]; then
+            echo "PROD_KEYS secret is empty"
+            exit 1
+          fi
+
+          printf '%s' "$PROD_KEYS" > "$RUNNER_TEMP/prod.keys"
+          chmod 600 "$RUNNER_TEMP/prod.keys"
+          echo "prod.keys prepared"
+
+      - name: Download Naruto Storm 4 NSP
+        run: |
+          mkdir -p "$RUNNER_TEMP/storm4-nsp"
+
+          FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
+
+          gdown \
+            "https://drive.google.com/uc?id=${FILE_ID}" \
+            -O "$RUNNER_TEMP/storm4-nsp/storm4.nsp" \
+            --retries 3 \
+            --timeout 60
+
+          if [ ! -s "$RUNNER_TEMP/storm4-nsp/storm4.nsp" ]; then
+            echo "NSP download failed"
+            exit 1
+          fi
+
+          SIZE=$(stat -c%s "$RUNNER_TEMP/storm4-nsp/storm4.nsp")
+          echo "Downloaded size: $SIZE bytes"
+
+          if [ "$SIZE" -lt 1000000000 ]; then
+            echo "NSP file is too small"
+            exit 1
+          fi
+
+          MAGIC=$(head -c 4 "$RUNNER_TEMP/storm4-nsp/storm4.nsp")
+
+          if [ "$MAGIC" != "PFS0" ]; then
+            echo "Invalid NSP/PFS0 file"
+            exit 1
+          fi
+
+          echo "NSP validation passed"
+
+      - name: Survey Naruto Storm 4
+        run: |
+          python scripts/build_ipa_from_nsp.py \
+            "$RUNNER_TEMP/storm4-nsp" \
+            -k "$RUNNER_TEMP/prod.keys" \
+            --survey-only \
+            --progress lines
+
+      - name: Upload Survey Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Naruto-Storm4-Survey
+          path: |
+            ${{ runner.temp }}/storm4-nsp/01003F800CF5C000_survey/survey.md
+            ${{ runner.temp }}/storm4-nsp/01003F800CF5C000_survey/logs/*.log
+          compression-level: 6
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Remove temporary sensitive files
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/prod.keys"
+          rm -f "$RUNNER_TEMP/storm4-nsp/storm4.nsp"
+          echo "Temporary sensitive files removed"
