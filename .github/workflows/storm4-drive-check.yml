@@ -1,0 +1,53 @@
+
+name: Storm 4 - Google Drive Access Check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-drive:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check Google Drive file access
+        run: |
+          python3 - <<'PY'
+          import requests
+
+          file_id = "1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
+          url = "https://drive.google.com/uc"
+
+          response = requests.get(
+              url,
+              params={"export": "download", "id": file_id},
+              stream=True,
+              allow_redirects=True,
+              timeout=60
+          )
+
+          print("HTTP status:", response.status_code)
+          print("Final URL:", response.url[:200])
+          print("Content-Type:", response.headers.get("Content-Type"))
+          print("Content-Length:", response.headers.get("Content-Length"))
+
+          if response.status_code != 200:
+              raise SystemExit("Google Drive access failed")
+
+          content_type = response.headers.get("Content-Type", "")
+
+          if "text/html" in content_type:
+              print("Google Drive returned an HTML confirmation page.")
+              print("The file may require an additional confirmation step.")
+              raise SystemExit("Direct download is not confirmed")
+
+          size = response.headers.get("Content-Length")
+
+          if size:
+              print("File size (GB):", round(int(size) / 1_000_000_000, 2))
+
+          print("Google Drive returned a non-HTML file response.")
+          response.close()
+          PY
