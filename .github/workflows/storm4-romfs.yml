@@ -1,0 +1,51 @@
+
+name: Storm 4 - Test ROMFS Extractor
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-extractor:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout NXNative
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Show environment
+        run: |
+          dotnet --info
+          df -h
+
+      - name: Restore nx_extract
+        run: |
+          dotnet restore dm/tools/nx_extract/nx_extract.csproj
+
+      - name: Build nx_extract
+        run: |
+          dotnet build dm/tools/nx_extract/nx_extract.csproj \
+            --configuration Release \
+            --no-restore \
+            --output "$RUNNER_TEMP/nx_extract"
+
+      - name: Verify extractor
+        run: |
+          set +e
+          dotnet "$RUNNER_TEMP/nx_extract/nx_extract.dll" \
+            > "$RUNNER_TEMP/help.txt" 2>&1
+          status=$?
+          set -e
+
+          cat "$RUNNER_TEMP/help.txt"
+          test "$status" -eq 2
+          grep -q "usage: nx_extract" "$RUNNER_TEMP/help.txt"
+
+          echo "NX Extractor build and usage test passed"
