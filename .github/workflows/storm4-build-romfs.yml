@@ -34,6 +34,7 @@ jobs:
             echo "PROD_KEYS secret is empty"
             exit 1
           fi
+
           printf '%s' "$PROD_KEYS" > "$RUNNER_TEMP/prod.keys"
           chmod 600 "$RUNNER_TEMP/prod.keys"
           echo "prod.keys prepared"
@@ -47,7 +48,6 @@ jobs:
             --no-restore \
             --output "$RUNNER_TEMP/nx_extract"
 
-      - name: 
       - name: Download Naruto Storm 4 NSP
         run: |
           FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
@@ -72,13 +72,13 @@ jobs:
           fi
 
           MAGIC=$(head -c 4 "$RUNNER_TEMP/storm4.nsp")
+
           if [ "$MAGIC" != "PFS0" ]; then
             echo "Downloaded file is not a valid NSP/PFS0 container"
             exit 1
           fi
 
           echo "NSP validation passed"
-
 
       - name: Extract Vanilla ROMFS
         run: |
