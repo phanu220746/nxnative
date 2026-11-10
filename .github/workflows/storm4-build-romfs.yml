@@ -1,0 +1,107 @@
+
+name: Storm 4 - Build Vanilla ROMFS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-romfs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout NXNative
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Google Drive downloader
+        run: |
+          python3 -m pip install --user gdown
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare prod.keys
+        env:
+          PROD_KEYS: ${{ secrets.PROD_KEYS }}
+        run: |
+          if [ -z "$PROD_KEYS" ]; then
+            echo "PROD_KEYS secret is empty"
+            exit 1
+          fi
+          printf '%s' "$PROD_KEYS" > "$RUNNER_TEMP/prod.keys"
+          chmod 600 "$RUNNER_TEMP/prod.keys"
+          echo "prod.keys prepared"
+
+      - name: Build NX Extractor
+        run: |
+          dotnet restore dm/tools/nx_extract/nx_extract.csproj
+
+          dotnet build dm/tools/nx_extract/nx_extract.csproj \
+            --configuration Release \
+            --no-restore \
+            --output "$RUNNER_TEMP/nx_extract"
+
+      - name: Download Naruto Storm 4 NSP
+        run: |
+          FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
+
+          gdown --fuzzy \
+            "https://drive.google.com/file/d/${FILE_ID}/view" \
+            -O "$RUNNER_TEMP/storm4.nsp"
+
+          if [ ! -s "$RUNNER_TEMP/storm4.nsp" ]; then
+            echo "NSP download failed"
+            exit 1
+          fi
+
+          SIZE=$(stat -c%s "$RUNNER_TEMP/storm4.nsp")
+          echo "Downloaded size: $SIZE bytes"
+
+          if [ "$SIZE" -lt 1000000000 ]; then
+            echo "Downloaded file is too small to be the NSP"
+            exit 1
+          fi
+
+          MAGIC=$(head -c 4 "$RUNNER_TEMP/storm4.nsp")
+          if [ "$MAGIC" != "PFS0" ]; then
+            echo "Downloaded file is not a valid NSP/PFS0 container"
+            exit 1
+          fi
+
+          echo "NSP validation passed"
+
+      - name: Extract Vanilla ROMFS
+        run: |
+          mkdir -p "$RUNNER_TEMP/storm4-output"
+
+          dotnet "$RUNNER_TEMP/nx_extract/nx_extract.dll" \
+            "$RUNNER_TEMP/prod.keys" \
+            "$RUNNER_TEMP/storm4.nsp" \
+            - \
+            "$RUNNER_TEMP/storm4-output" \
+            --romfs-image
+
+          echo "Extraction completed"
+          ls -lh "$RUNNER_TEMP/storm4-output"
+
+      - name: Remove temporary sensitive files
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/prod.keys"
+          rm -f "$RUNNER_TEMP/storm4.nsp"
+
+      - name: Upload Vanilla ROMFS
+        uses: actions/upload-artifact@v4
+        with:
+          name: Naruto-Storm4-Vanilla-ROMFS
+          path: |
+            ${{ runner.temp }}/storm4-output/
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
