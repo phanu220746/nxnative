@@ -1,37 +1,51 @@
-name: Build Pokémon Z-A IPA
+
+name: Storm 4 - Test ROMFS Extractor
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build:
-    runs-on: macos-14
+  build-extractor:
+    runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout nxnative
+      - name: Checkout NXNative
         uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
 
       - name: Show environment
         run: |
-          sw_vers
-          uname -m
+          dotnet --info
           df -h
 
-      - name: Install dependencies
+      - name: Restore nx_extract
         run: |
-          brew install xcodegen zstd spirv-cross glslang
-          brew install --cask dotnet-sdk
+          dotnet restore dm/tools/nx_extract/nx_extract.csproj
 
-      - name: Install Python dependencies
+      - name: Build nx_extract
         run: |
-          python3 -m pip install --user --break-system-packages \
-            lz4 capstone fonttools "backports.zstd; python_version < '3.14'"
+          dotnet build dm/tools/nx_extract/nx_extract.csproj \
+            --configuration Release \
+            --no-restore \
+            --output "$RUNNER_TEMP/nx_extract"
 
-      - name: Verify Z-A profile
+      - name: Verify extractor
         run: |
-          test -d dm/games/0100F43008C44000
-          echo "Pokémon Legends: Z-A profile found"
+          set +e
+          dotnet "$RUNNER_TEMP/nx_extract/nx_extract.dll" \
+            > "$RUNNER_TEMP/help.txt" 2>&1
+          status=$?
+          set -e
 
-      - name: Check packer
-        run: |
-          python3 scripts/build_ipa_from_nsp.py --help
+          cat "$RUNNER_TEMP/help.txt"
+          test "$status" -eq 2
+          grep -q "usage: nx_extract" "$RUNNER_TEMP/help.txt"
+
+          echo "NX Extractor build and usage test passed"
