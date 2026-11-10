@@ -1,36 +1,39 @@
+      - name: Inspect Google Drive response
+        run: |
+          python3 - <<'PY'
+          import requests
+          from html.parser import HTMLParser
 
-import requests
-from html.parser import HTMLParser
+          file_id = "1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
+          url = "https://drive.google.com/uc"
 
-file_id = "1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
-url = "https://drive.google.com/uc"
+          response = requests.get(
+              url,
+              params={"export": "download", "id": file_id},
+              timeout=60
+          )
 
-response = requests.get(
-    url,
-    params={"export": "download", "id": file_id},
-    timeout=60
-)
+          print("HTTP:", response.status_code)
 
-print("HTTP:", response.status_code)
+          class PageParser(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.texts = []
 
-class PageParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.texts = []
+              def handle_data(self, data):
+                  value = data.strip()
+                  if value:
+                      self.texts.append(value)
 
-    def handle_data(self, data):
-        value = data.strip()
-        if value:
-            self.texts.append(value)
+          parser = PageParser()
+          parser.feed(response.text)
 
-parser = PageParser()
-parser.feed(response.text)
+          print("Google Drive page message:")
+          for text in parser.texts:
+              print("-", text)
 
-print("Google Drive page message:")
-for text in parser.texts:
-    print("-", text)
-
-print("Links containing download:")
-for line in response.text.splitlines():
-    if "download" in line.lower() or "confirm" in line.lower():
-        print(line[:1000])
+          print("Links containing download:")
+          for line in response.text.splitlines():
+              if "download" in line.lower() or "confirm" in line.lower():
+                  print(line[:1000])
+          PY
