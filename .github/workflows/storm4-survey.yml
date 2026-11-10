@@ -1,4 +1,3 @@
-
 name: Storm 4 - Survey Game Profile
 
 on:
@@ -51,20 +50,33 @@ jobs:
 
       - name: Download Naruto Storm 4 NSP
         run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/storm4-nsp"
 
           FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
-
           NSP="$RUNNER_TEMP/storm4-nsp/Naruto Storm 4 [01003F800CF5C000].nsp"
 
-          gdown \
+          echo "Trying Google Drive download with gdown..."
+          if ! gdown \
             "https://drive.google.com/uc?id=${FILE_ID}" \
             -O "$NSP" \
             --retries 3 \
-            --timeout 60
+            --timeout 60; then
+
+            echo "gdown failed. Trying direct Google Drive download..."
+            rm -f "$NSP"
+
+            curl -fL \
+              --retry 3 \
+              --retry-all-errors \
+              --connect-timeout 60 \
+              -A "Mozilla/5.0" \
+              "https://drive.usercontent.google.com/download?id=${FILE_ID}&export=download&confirm=t" \
+              -o "$NSP"
+          fi
 
           if [ ! -s "$NSP" ]; then
-            echo "NSP download failed"
+            echo "NSP download failed: file is missing or empty"
             exit 1
           fi
 
@@ -72,14 +84,15 @@ jobs:
           echo "Downloaded size: $SIZE bytes"
 
           if [ "$SIZE" -lt 1000000000 ]; then
-            echo "NSP file is too small"
+            echo "NSP file is too small; download may be an HTML warning page"
+            file "$NSP" || true
             exit 1
           fi
 
           MAGIC=$(head -c 4 "$NSP")
-
           if [ "$MAGIC" != "PFS0" ]; then
-            echo "Invalid NSP/PFS0 file"
+            echo "Invalid NSP/PFS0 file; download may be an HTML page or incomplete"
+            file "$NSP" || true
             exit 1
           fi
 
@@ -88,25 +101,35 @@ jobs:
 
       - name: Diagnose Naruto NSP
         run: |
+          set -euo pipefail
           echo "=== NSP folder ==="
           ls -lah "$RUNNER_TEMP/storm4-nsp"
 
-          echo "=== NSP header check ==="
-          python - <<'PY'
+          echo "=== NSP header and title tag check ==="
+          python - "$RUNNER_TEMP/storm4-nsp" <<'PY'
+          import re
+          import sys
           from pathlib import Path
 
-          folder = Path("/home/runner/work/_temp/storm4-nsp")
+          folder = Path(sys.argv[1])
+          extensions = {".nsp", ".xci", ".nsz", ".xcz"}
+          found = False
 
-          for p in folder.glob("*"):
-              if p.is_file():
-                  print("FILE:", p.name)
-                  print("SIZE:", p.stat().st_size)
+          for p in sorted(folder.iterdir()):
+              if not p.is_file() or p.suffix.lower() not in extensions:
+                  continue
+              found = True
+              with p.open("rb") as f:
+                  header = f.read(0x104)
+              tagged_id = re.search(r"\[([0-9A-Fa-f]{16})\]", p.name)
+              print(f"FILE: {p.name}")
+              print(f"SIZE: {p.stat().st_size} bytes")
+              print(f"PFS0: {header[:4] == b'PFS0'}")
+              print(f"XCI: {header[0x100:0x104] == b'HEAD'}")
+              print(f"TITLE_ID_IN_FILENAME: {tagged_id.group(1) if tagged_id else 'not found'}")
 
-                  with p.open("rb") as f:
-                      h = f.read(0x104)
-
-                  print("HEADER:", h[:4])
-                  print("PFS0:", h[:4] == b"PFS0")
+          if not found:
+              raise SystemExit("No NSP/XCI/NSZ/XCZ file found in the expected folder")
           PY
 
       - name: Survey Naruto Storm 4
