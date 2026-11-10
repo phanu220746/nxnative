@@ -1,3 +1,17 @@
+
+name: Storm 4 - Google Drive Access Check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-drive:
+    runs-on: ubuntu-24.04
+
+    steps:
       - name: Inspect Google Drive response
         run: |
           python3 - <<'PY'
