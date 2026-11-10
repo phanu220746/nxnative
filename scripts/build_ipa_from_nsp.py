@@ -442,7 +442,7 @@ def version_of(path):
 COMPRESSED = {'.nsz': '.nsp', '.xcz': '.xci'}   # nsz's compressed NSP / XCI and what nsz -D makes of them
 
 
-def scan_nsps(nsp_dir):
+def scan_nsps(nsp_dir, forced_title_id=None):
     """Group by game: {application title ID: {'base': path, 'updates': [(version, path)], 'dlc': [(title ID, version, path)]}}. An NSZ / XCZ is listed as it is (its ticket names
     the title as an NSP's does) and converted afterwards (decompress_nsz)"""
     fams, unknown = {}, []
@@ -462,6 +462,19 @@ def scan_nsps(nsp_dir):
         if low == 0: f['base'] = p
         elif low == 0x800: f['updates'].append((version_of(p), p))
         else: f['dlc'].append((tid, version_of(p), p))
+    if forced_title_id is not None:
+        if len(unknown) != 1 or len(fams) > 1:
+            raise BuildError('--title-id can only identify exactly one otherwise-unidentified package in a folder with no other game')
+        tid = int(str(forced_title_id).replace('0x', '').replace('0X', ''), 16)
+        if tid & 0xFFF:
+            raise BuildError(f'--title-id must be a base-game title ID ending in 000, got {tid:016X}')
+        if fams and tid not in fams:
+            raise BuildError('--title-id does not match the readable title ID already found in the folder')
+        fam = fams.setdefault(tid, {'base': None, 'updates': [], 'dlc': []})
+        if fam['base'] is not None:
+            raise BuildError('--title-id would identify a second base game')
+        fam['base'] = unknown[0]
+        unknown.clear()
     if len(fams) == 1 and len(unknown) == 1 and next(iter(fams.values()))['base'] is None:   # a base game converted from a cartridge may have neither tags nor a ticket; build IDs are checked afterwards
         next(iter(fams.values()))['base'] = unknown[0]
     if not fams: raise BuildError(f'no NSP with a readable title ID in {nsp_dir}')
@@ -2059,6 +2072,7 @@ def parse_args(argv):
         epilog='example: python3 scripts/build_ipa_from_nsp.py ~/nsp/"Super Mario Bros Wonder" -k ~/keys/prod.keys')
     ap.add_argument('nsp_dir', nargs='?', help='folder holding one game\'s NSPs (default: the NSP_DIR setting, else asked)')
     ap.add_argument('-k', '--keys', help='path of prod.keys (default: the PROD_KEYS setting, else asked)')
+    ap.add_argument('--title-id', help='base-game title ID in 16-digit hex, only when the NSP has no readable ticket/title ID (e.g. 01003F800CF5C000)')
     ap.add_argument('-p', '--package', help='version packed into the IPA, e.g. v327680 / v0 (default: the newest in the folder)')
     ap.add_argument('-o', '--out', help='output IPA, or app with --platform mac-app (default: <the profile\'s ipa>, or <game name>.app, in the NSP folder)')
     ap.add_argument('--app-name', help='app name on the home screen (default: the game name in the base NSP)')
@@ -2190,7 +2204,7 @@ def main(args=None):
     configure_dotnet(env)
     env.setdefault('J', str(os.cpu_count() or 8))   # shader_split.py's and dmsh_build.py's workers (their default is 8)
     py = sys.executable
-    app, fam = scan_nsps(nsp_dir)
+    app, fam = scan_nsps(nsp_dir, args.title_id)
     fam = decompress_nsz(nsp_dir, app, fam, keys, env)
     force =args.provisional or PROVISIONAL   # a provisional profile even when dm/games has one (testing the guesses)
     g, provisional, shadowed = None if force else gamemod.by_title(app), False, False
