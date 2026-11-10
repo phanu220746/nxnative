@@ -47,13 +47,16 @@ jobs:
             --no-restore \
             --output "$RUNNER_TEMP/nx_extract"
 
+      - name: 
       - name: Download Naruto Storm 4 NSP
         run: |
           FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
 
-          gdown --fuzzy \
-            "https://drive.google.com/file/d/${FILE_ID}/view" \
-            -O "$RUNNER_TEMP/storm4.nsp"
+          gdown \
+            "https://drive.google.com/uc?id=${FILE_ID}" \
+            -O "$RUNNER_TEMP/storm4.nsp" \
+            --retries 3 \
+            --timeout 60
 
           if [ ! -s "$RUNNER_TEMP/storm4.nsp" ]; then
             echo "NSP download failed"
@@ -64,7 +67,7 @@ jobs:
           echo "Downloaded size: $SIZE bytes"
 
           if [ "$SIZE" -lt 1000000000 ]; then
-            echo "Downloaded file is too small to be the NSP"
+            echo "Downloaded file is too small"
             exit 1
           fi
 
@@ -75,6 +78,7 @@ jobs:
           fi
 
           echo "NSP validation passed"
+
 
       - name: Extract Vanilla ROMFS
         run: |
