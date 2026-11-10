@@ -1,53 +1,36 @@
 
-name: Storm 4 - Google Drive Access Check
+import requests
+from html.parser import HTMLParser
 
-on:
-  workflow_dispatch:
+file_id = "1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
+url = "https://drive.google.com/uc"
 
-permissions:
-  contents: read
+response = requests.get(
+    url,
+    params={"export": "download", "id": file_id},
+    timeout=60
+)
 
-jobs:
-  check-drive:
-    runs-on: ubuntu-24.04
+print("HTTP:", response.status_code)
 
-    steps:
-      - name: Check Google Drive file access
-        run: |
-          python3 - <<'PY'
-          import requests
+class PageParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.texts = []
 
-          file_id = "1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
-          url = "https://drive.google.com/uc"
+    def handle_data(self, data):
+        value = data.strip()
+        if value:
+            self.texts.append(value)
 
-          response = requests.get(
-              url,
-              params={"export": "download", "id": file_id},
-              stream=True,
-              allow_redirects=True,
-              timeout=60
-          )
+parser = PageParser()
+parser.feed(response.text)
 
-          print("HTTP status:", response.status_code)
-          print("Final URL:", response.url[:200])
-          print("Content-Type:", response.headers.get("Content-Type"))
-          print("Content-Length:", response.headers.get("Content-Length"))
+print("Google Drive page message:")
+for text in parser.texts:
+    print("-", text)
 
-          if response.status_code != 200:
-              raise SystemExit("Google Drive access failed")
-
-          content_type = response.headers.get("Content-Type", "")
-
-          if "text/html" in content_type:
-              print("Google Drive returned an HTML confirmation page.")
-              print("The file may require an additional confirmation step.")
-              raise SystemExit("Direct download is not confirmed")
-
-          size = response.headers.get("Content-Length")
-
-          if size:
-              print("File size (GB):", round(int(size) / 1_000_000_000, 2))
-
-          print("Google Drive returned a non-HTML file response.")
-          response.close()
-          PY
+print("Links containing download:")
+for line in response.text.splitlines():
+    if "download" in line.lower() or "confirm" in line.lower():
+        print(line[:1000])
