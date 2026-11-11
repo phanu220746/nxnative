@@ -1,0 +1,193 @@
+
+name: Naruto Storm 4 - Verify ROMFS Index
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Install Python tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install gdown
+
+      - name: Download ROMFS ZIP
+        run: |
+          gdown "1DzcDUo5lP_sHDuDiB832QuyLzltzLU6N" -O romfs.zip
+          test -s romfs.zip
+
+      - name: Read and verify DMROMFS1 index
+        run: |
+          python - <<'PY'
+          import zipfile
+          import struct
+          import os
+
+          ZIP = "romfs.zip"
+
+          with zipfile.ZipFile(ZIP) as z:
+              matches = [
+                  x for x in z.infolist()
+                  if x.filename.replace("\\", "/").endswith("RomFS.img")
+              ]
+
+              if len(matches) != 1:
+                  raise SystemExit(f"Expected one RomFS.img, found {len(matches)}")
+
+              item = matches[0]
+              print("RomFS image:", item.filename)
+              print("Image size:", item.file_size)
+
+              with z.open(item) as f:
+                  header = f.read(32)
+
+                  if len(header) != 32:
+                      raise SystemExit("Invalid header length")
+
+                  magic, index_offset, index_size, count = struct.unpack(
+                      "<8sQQQ", header
+                  )
+
+                  print("Magic:", magic.decode("ascii", errors="replace"))
+                  print("Index offset:", index_offset)
+                  print("Index size:", index_size)
+                  print("Entry count:", count)
+
+                  if magic != b"DMROMFS1":
+                      raise SystemExit("Unsupported ROMFS image format")
+
+                  if count == 0 or count > 10000000:
+                      raise SystemExit("Invalid entry count")
+
+                  entry_bytes = count * 24
+                  if index_offset + index_size > item.file_size:
+                      raise SystemExit("Index exceeds image size")
+
+                  if entry_bytes > index_size:
+                      raise SystemExit("Invalid index size")
+
+                  f.seek(index_offset)
+                  raw = f.read(entry_bytes)
+
+                  if len(raw) != entry_bytes:
+                      raise SystemExit("Cannot read complete entry table")
+
+                  entries = [
+                      struct.unpack_from("<QQIHBB", raw, i * 24)
+                      for i in range(count)
+                  ]
+
+                  names_start = index_offset + entry_bytes
+                  names_size = index_size - entry_bytes
+
+                  f.seek(names_start)
+                  names = f.read(names_size)
+
+                  if len(names) != names_size:
+                      raise SystemExit("Cannot read complete name table")
+
+          decoded = []
+          for i, (a, b, name_off, name_len, typ, reserved) in enumerate(entries):
+              if name_off + name_len > len(names):
+                  raise SystemExit(f"Invalid name range at entry {i}")
+
+              name = names[name_off:name_off + name_len].decode("utf-8")
+              if "/" in name or "\\" in name or "\x00" in name:
+                  raise SystemExit(f"Invalid entry name at {i}")
+
+              if typ not in (0, 1):
+                  raise SystemExit(f"Unknown entry type {typ} at {i}")
+
+              decoded.append({
+                  "name": name,
+                  "directory": typ == 0,
+                  "a": a,
+                  "b": b
+              })
+
+          if decoded[0]["name"] != "" or not decoded[0]["directory"]:
+              raise SystemExit("Root directory entry is invalid")
+
+          paths = [None] * count
+          paths[0] = ""
+
+          for i, entry in enumerate(decoded):
+              if not entry["directory"]:
+                  continue
+
+              first = entry["a"]
+              number = entry["b"]
+
+              if first + number > count:
+                  raise SystemExit(f"Invalid child range at entry {i}")
+
+              for child in range(first, first + number):
+                  if child == 0 or paths[child] is not None:
+                      raise SystemExit(f"Duplicate or invalid child: {child}")
+
+                  parent = paths[i]
+                  name = decoded[child]["name"]
+                  paths[child] = (parent + "/" + name) if parent else name
+
+          if any(p is None for p in paths):
+              raise SystemExit("Some entries are unreachable from root")
+
+          files = []
+          directories = []
+
+          for i, entry in enumerate(decoded):
+              if entry["directory"]:
+                  directories.append(paths[i])
+              else:
+                  files.append((paths[i], entry["b"]))
+
+          print("\nTotal entries:", count)
+          print("Files:", len(files))
+          print("Directories:", len(directories))
+
+          print("\nTop-level folders:")
+          for p in sorted(set(x.split("/")[0] for x in paths if x)):
+              print(" -", p)
+
+          marker = "data/sim/stage2.cpk"
+          found = [x for x in files if x[0] == marker]
+
+          print("\nMarker:", marker)
+          if found:
+              print("MARKER FOUND")
+              print("Marker size:", found[0][1])
+          else:
+              print("MARKER NOT FOUND")
+
+          print("\nSample game files:")
+          for p, size in files[:30]:
+              print(f"{p}\t{size}")
+
+          with open("romfs-index-report.txt", "w") as out:
+              out.write(f"Magic: {magic.decode()}\n")
+              out.write(f"Entries: {count}\n")
+              out.write(f"Files: {len(files)}\n")
+              out.write(f"Directories: {len(directories)}\n")
+              out.write(f"Marker found: {bool(found)}\n")
+              for p, size in files:
+                  out.write(f"{p}\t{size}\n")
+
+          if not found:
+              raise SystemExit("Required Naruto Storm 4 marker not found")
+
+          print("\nROMFS INDEX VALIDATION PASSED")
+          PY
+
+      - name: Upload ROMFS report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storm4-romfs-index-report
+          path: romfs-index-report.txt
+          if-no-files-found: ignore
