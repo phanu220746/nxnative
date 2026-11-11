@@ -1,0 +1,75 @@
+
+name: Naruto Storm 4 - Inspect RomFS Image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install gdown
+
+      - name: Download ROMFS ZIP
+        run: |
+          gdown "1DzcDUo5lP_sHDuDiB832QuyLzltzLU6N" -O romfs.zip
+          test -s romfs.zip
+
+      - name: Extract RomFS.img only
+        run: |
+          python - <<'PY'
+          import zipfile
+
+          with zipfile.ZipFile("romfs.zip") as z:
+              matches = [
+                  x for x in z.infolist()
+                  if x.filename.replace("\\", "/").endswith("RomFS.img")
+              ]
+
+              if len(matches) != 1:
+                  raise SystemExit(
+                      f"Expected one RomFS.img, found {len(matches)}"
+                  )
+
+              item = matches[0]
+              print("Found:", item.filename)
+              print("Size:", item.file_size)
+
+              with z.open(item) as src, open("RomFS.img", "wb") as dst:
+                  while True:
+                      chunk = src.read(8 * 1024 * 1024)
+                      if not chunk:
+                          break
+                      dst.write(chunk)
+
+          print("RomFS.img extracted successfully")
+          PY
+
+      - name: Inspect RomFS image header
+        run: |
+          python - <<'PY'
+          import os
+
+          with open("RomFS.img", "rb") as f:
+              header = f.read(64)
+
+          print("RomFS image size:", os.path.getsize("RomFS.img"))
+          print("First 64 bytes:", header.hex(" "))
+          print("Header ASCII:", repr(header))
+          PY
+
+      - name: Upload inspection report
+        if: always()
+        run: |
+          echo "RomFS image inspection finished"
+          ls -lh RomFS.img || true
