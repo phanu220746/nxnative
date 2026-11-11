@@ -1,0 +1,110 @@
+
+name: Naruto Storm 4 - Check ROMFS ZIP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-romfs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install downloader
+        run: |
+          python -m pip install --upgrade pip
+          pip install gdown
+
+      - name: Download ROMFS ZIP from Google Drive
+        run: |
+          gdown --fuzzy \
+            "https://drive.google.com/file/d/1DzcDUo5lP_sHDuDiB832QuyLzltzLU6N/view?usp=drivesdk" \
+            -O romfs.zip
+
+          test -s romfs.zip
+          ls -lh romfs.zip
+          df -h .
+
+      - name: Inspect ZIP without extracting
+        run: |
+          python - <<'PY'
+          import zipfile
+          import os
+          from collections import Counter
+
+          path = "romfs.zip"
+          report = []
+
+          def log(s):
+              print(s)
+              report.append(s)
+
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("ERROR: Downloaded file is not a valid ZIP")
+
+          with zipfile.ZipFile(path) as z:
+              entries = z.infolist()
+              files = [x for x in entries if not x.is_dir()]
+
+              total_size = sum(x.file_size for x in files)
+              total_compressed = sum(x.compress_size for x in files)
+
+              log("=== NARUTO STORM 4 ROMFS REPORT ===")
+              log(f"ZIP size: {os.path.getsize(path):,} bytes")
+              log(f"File count: {len(files):,}")
+              log(f"Uncompressed total: {total_size:,} bytes")
+              log(f"Compressed total: {total_compressed:,} bytes")
+
+              folders = Counter()
+              for x in files:
+                  parts = x.filename.replace("\\", "/").strip("/").split("/")
+                  if parts:
+                      folders[parts[0]] += 1
+
+              log("\n=== TOP LEVEL FOLDERS ===")
+              for name, count in folders.most_common(20):
+                  log(f"{name}: {count} files")
+
+              markers = [
+                  x for x in files
+                  if x.filename.replace("\\", "/").lstrip("./").endswith(
+                      "data/sim/stage2.cpk"
+                  )
+              ]
+
+              log("\n=== ROMFS MARKER ===")
+              if markers:
+                  for m in markers:
+                      log(f"FOUND: {m.filename}")
+                      log(f"Size: {m.file_size:,} bytes")
+                      with z.open(m) as f:
+                          header = f.read(16)
+                      log(f"Header: {header!r}")
+              else:
+                  log("NOT FOUND: data/sim/stage2.cpk")
+
+              log("\n=== ZIP ENCRYPTION ===")
+              encrypted = sum(1 for x in files if x.flag_bits & 1)
+              log(f"Encrypted files: {encrypted}")
+
+              with open("romfs-report.txt", "w") as f:
+                  f.write("\n".join(report) + "\n")
+
+              if not markers:
+                  raise SystemExit(
+                      "ROMFS marker missing. Check archive structure."
+                  )
+
+          print("\nInspection completed.")
+          PY
+
+      - name: Upload inspection report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Naruto-Storm4-ROMFS-Check
+          path: romfs-report.txt
+          if-no-files-found: ignore
+          retention-days: 7
