@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Check Xcode and install Metal Toolchain
+      - name: Check Xcode and Metal Toolchain
         run: |
           xcodebuild -version
           xcodebuild -downloadComponent MetalToolchain
@@ -39,7 +39,10 @@ jobs:
 
           python -m pip install --upgrade pip
           python -m pip install \
-            lz4 capstone fonttools nsz \
+            lz4 \
+            capstone \
+            fonttools \
+            nsz \
             "backports.zstd; python_version < '3.14'"
 
       - name: Install Google Drive downloader
@@ -58,8 +61,12 @@ jobs:
           printf '%s' "$PROD_KEYS" > "$RUNNER_TEMP/prod.keys"
           chmod 600 "$RUNNER_TEMP/prod.keys"
 
+          echo "prod.keys prepared"
+
       - name: Download Naruto Storm 4 NSP
         run: |
+          set -euo pipefail
+
           FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
 
           gdown \
@@ -71,6 +78,7 @@ jobs:
           test -s "$RUNNER_TEMP/storm4.nsp"
 
           SIZE=$(stat -f%z "$RUNNER_TEMP/storm4.nsp")
+
           echo "NSP size: $SIZE bytes"
 
           if [ "$SIZE" -lt 1000000000 ]; then
@@ -89,15 +97,23 @@ jobs:
 
       - name: Prepare game folder
         run: |
+          set -euo pipefail
+
           mkdir -p "$RUNNER_TEMP/storm4"
+
           cp "$RUNNER_TEMP/storm4.nsp" \
-             "$RUNNER_TEMP/storm4/NarutoStorm4.nsp"
+            "$RUNNER_TEMP/storm4/NarutoStorm4.nsp"
+
+          ls -lh "$RUNNER_TEMP/storm4/"
 
       - name: Build unsigned iOS IPA
         run: |
+          set -euo pipefail
+
           python3 scripts/build_ipa_from_nsp.py \
             "$RUNNER_TEMP/storm4" \
             -k "$RUNNER_TEMP/prod.keys" \
+            --title-id 01003F800CF5C000 \
             -o "$RUNNER_TEMP/NarutoStorm4.ipa" \
             --romfs separate \
             --keep-extracted \
@@ -106,6 +122,7 @@ jobs:
           test -s "$RUNNER_TEMP/NarutoStorm4.ipa"
 
           echo "IPA build completed"
+
           ls -lh "$RUNNER_TEMP/NarutoStorm4.ipa"
 
       - name: Upload unsigned IPA
@@ -118,13 +135,15 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      - name: Upload build logs
+      - name: Upload build logs and profile
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Naruto-Storm4-Build-Logs
           path: |
             ${{ runner.temp }}/storm4/01003F800CF5C000_build/logs/
+            ${{ runner.temp }}/storm4/01003F800CF5C000_build/profile/
+            ${{ runner.temp }}/storm4/01003F800CF5C000_survey/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -133,3 +152,5 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/prod.keys"
           rm -f "$RUNNER_TEMP/storm4.nsp"
+
+          echo "Temporary sensitive files removed"
