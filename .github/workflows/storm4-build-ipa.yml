@@ -140,7 +140,7 @@ jobs:
             --title-id 01003F800CF5C000 \
             -o "$RUNNER_TEMP/NarutoStorm4.ipa" \
             --romfs separate \
-            --progress links
+            --progress lines
 
           test -s "$RUNNER_TEMP/NarutoStorm4.ipa"
 
