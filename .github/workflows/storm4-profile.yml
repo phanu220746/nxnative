@@ -1,0 +1,135 @@
+name: Storm 4 - Build Provisional Profile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout NXNative
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            gdown \
+            lz4 \
+            "capstone>=5,<6" \
+            fonttools \
+            backports.zstd
+
+      - name: Prepare prod.keys
+        env:
+          PROD_KEYS: ${{ secrets.PROD_KEYS }}
+        run: |
+          if [ -z "$PROD_KEYS" ]; then
+            echo "PROD_KEYS secret is empty"
+            exit 1
+          fi
+
+          printf '%s' "$PROD_KEYS" > "$RUNNER_TEMP/prod.keys"
+          chmod 600 "$RUNNER_TEMP/prod.keys"
+          echo "prod.keys prepared"
+
+      - name: Download Naruto Storm 4 NSP
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/storm4-nsp"
+
+          FILE_ID="1X3iMtcMhmxRyuVOAomSDJyRGdbjoSOa5"
+          NSP="$RUNNER_TEMP/storm4-nsp/Naruto Storm 4 [01003F800CF5C000].nsp"
+
+          echo "Trying Google Drive download with gdown..."
+          if ! gdown \
+            "https://drive.google.com/uc?id=${FILE_ID}" \
+            -O "$NSP" \
+            --retries 3 \
+            --timeout 60; then
+
+            echo "gdown failed. Trying direct Google Drive download..."
+            rm -f "$NSP"
+
+            curl -fL \
+              --retry 3 \
+              --retry-all-errors \
+              --connect-timeout 60 \
+              -A "Mozilla/5.0" \
+              "https://drive.usercontent.google.com/download?id=${FILE_ID}&export=download&confirm=t" \
+              -o "$NSP"
+          fi
+
+          if [ ! -s "$NSP" ]; then
+            echo "NSP download failed: file is missing or empty"
+            exit 1
+          fi
+
+          SIZE=$(stat -c%s "$NSP")
+          echo "Downloaded size: $SIZE bytes"
+
+          if [ "$SIZE" -lt 1000000000 ]; then
+            echo "NSP file is too small; download may be an HTML warning page"
+            file "$NSP" || true
+            exit 1
+          fi
+
+          MAGIC=$(head -c 4 "$NSP")
+          if [ "$MAGIC" != "PFS0" ]; then
+            echo "Invalid NSP/PFS0 file; download may be an HTML page or incomplete"
+            file "$NSP" || true
+            exit 1
+          fi
+
+          echo "NSP validation passed"
+          ls -lh "$NSP"
+
+      - name: Build Naruto Storm 4 provisional profile
+        run: |
+          set -euo pipefail
+          python scripts/build_ipa_from_nsp.py \
+            "$RUNNER_TEMP/storm4-nsp" \
+            -k "$RUNNER_TEMP/prod.keys" \
+            --profile-out "$RUNNER_TEMP/storm4-profile" \
+            --profile-only \
+            --progress lines
+
+          PROFILE="$RUNNER_TEMP/storm4-profile/01003F800CF5C000"
+          test -s "$PROFILE/game.tsv"
+          echo "Provisional profile created:"
+          ls -lah "$PROFILE"
+
+      - name: Upload Provisional Profile and Survey
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Naruto-Storm4-Provisional-Profile
+          path: |
+            ${{ runner.temp }}/storm4-profile/01003F800CF5C000/
+            ${{ runner.temp }}/storm4-nsp/01003F800CF5C000_survey/survey.md
+            ${{ runner.temp }}/storm4-nsp/01003F800CF5C000_survey/logs/*.log
+          compression-level: 6
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Remove temporary sensitive files
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/prod.keys"
+          rm -f "$RUNNER_TEMP/storm4-nsp/"*.nsp
+          echo "Temporary sensitive files removed"
