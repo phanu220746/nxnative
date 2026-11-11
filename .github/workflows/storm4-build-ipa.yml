@@ -34,7 +34,6 @@ jobs:
 
           echo "Removing unneeded large directories..."
           sudo rm -rf /usr/local/share/boost || true
-          sudo rm -rf /usr/local/share/dotnet/sdk/auxiliary || true
 
           echo "=== Free disk space after cleanup ==="
           df -h
@@ -44,6 +43,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
       - name: Check Xcode and Metal Toolchain
         run: |
           xcodebuild -version
@@ -52,7 +56,6 @@ jobs:
       - name: Install build dependencies
         run: |
           brew install xcodegen zstd glslang
-          brew install --cask dotnet-sdk
 
           dotnet --version
           xcodegen --version
@@ -121,7 +124,8 @@ jobs:
 
           mkdir -p "$RUNNER_TEMP/storm4"
 
-          cp "$RUNNER_TEMP/storm4.nsp" \
+          # ใช้ mv แทน cp เพื่อประหยัดพื้นที่ดิสก์
+          mv "$RUNNER_TEMP/storm4.nsp" \
             "$RUNNER_TEMP/storm4/NarutoStorm4.nsp"
 
           ls -lh "$RUNNER_TEMP/storm4/"
@@ -136,8 +140,7 @@ jobs:
             --title-id 01003F800CF5C000 \
             -o "$RUNNER_TEMP/NarutoStorm4.ipa" \
             --romfs separate \
-            --keep-extracted \
-            --progress lines
+            --progress links
 
           test -s "$RUNNER_TEMP/NarutoStorm4.ipa"
 
