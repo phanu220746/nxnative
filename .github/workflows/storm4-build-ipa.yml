@@ -7,123 +7,214 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: naruto-storm4-ipa-build
+  cancel-in-progress: false
+
 jobs:
   build-ipa:
-    runs-on: xcode-27
+    # ต้องเป็น Mac runner ที่ติดตั้ง Xcode 27.1 แล้ว
+    # และเพิ่ม custom label ชื่อ storm4-mac
+    runs-on: [self-hosted, macOS, ARM64, storm4-mac]
     timeout-minutes: 360
 
     env:
-      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      GAME_TITLE_ID: "01003F800CF5C000"
+      NSP_FILE_ID: "1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
 
     steps:
       - name: Checkout NXNative
         uses: actions/checkout@v4
+
+      - name: Check Mac environment and disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== macOS ==="
+          sw_vers
+
+          echo "=== Architecture ==="
+          uname -m
+
+          echo "=== Xcode ==="
+          xcodebuild -version
+          xcode-select -p
+
+          XCODE_VERSION=$(xcodebuild -version | awk '/Xcode/ {print $2}')
+          if [ "$XCODE_VERSION" != "27.1" ]; then
+            echo "ERROR: Xcode 27.1 is required."
+            exit 1
+          fi
+
+          echo "=== Disk space ==="
+          df -h "$RUNNER_TEMP"
+
+          FREE_KB=$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $4}')
+          FREE_GB=$((FREE_KB / 1024 / 1024))
+
+          echo "Free disk: ${FREE_GB} GB"
+
+          if [ "$FREE_GB" -lt 60 ]; then
+            echo "ERROR: At least 60 GB free disk space is required."
+            exit 1
+          fi
+
+          echo "Mac environment passed."
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Check Xcode and Metal Toolchain
-        run: |
-          xcodebuild -version
-          xcodebuild -downloadComponent MetalToolchain
-
       - name: Install build dependencies
+        shell: bash
         run: |
+          set -euo pipefail
+
           brew install xcodegen zstd glslang
           brew install --cask dotnet-sdk
 
-          dotnet --version
-          xcodegen --version
-
           python -m pip install --upgrade pip
+
           python -m pip install \
             lz4 \
             capstone \
             fonttools \
             nsz \
-            "backports.zstd; python_version < '3.14'"
+            "backports.zstd; python_version < '3.14'" \
+            gdown
 
-      - name: Install Google Drive downloader
+          echo "=== Dependency versions ==="
+          dotnet --version
+          xcodegen --version
+          python --version
+
+      - name: Install Metal Toolchain
+        shell: bash
         run: |
-          python -m pip install gdown
+          set -euo pipefail
+
+          xcodebuild -downloadComponent MetalToolchain
+
+          xcrun -f metal
+          xcrun -f metallib
+
+          echo "Metal Toolchain ready."
 
       - name: Prepare prod.keys
+        shell: bash
         env:
           PROD_KEYS: ${{ secrets.PROD_KEYS }}
         run: |
+          set -euo pipefail
+
           if [ -z "$PROD_KEYS" ]; then
-            echo "PROD_KEYS secret is missing"
+            echo "ERROR: PROD_KEYS secret is missing."
             exit 1
           fi
 
           printf '%s' "$PROD_KEYS" > "$RUNNER_TEMP/prod.keys"
           chmod 600 "$RUNNER_TEMP/prod.keys"
 
-          echo "prod.keys prepared"
+          if [ ! -s "$RUNNER_TEMP/prod.keys" ]; then
+            echo "ERROR: prod.keys is empty."
+            exit 1
+          fi
 
-      - name: Download Naruto Storm 4 NSP
+          echo "prod.keys prepared."
+
+      - name: Download and validate Naruto Storm 4 NSP
+        shell: bash
         run: |
           set -euo pipefail
 
-          FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
+          GAME_DIR="$RUNNER_TEMP/storm4"
+          NSP_PATH="$GAME_DIR/NarutoStorm4.nsp"
+
+          mkdir -p "$GAME_DIR"
+
+          echo "Downloading NSP directly into game folder..."
 
           gdown \
-            "https://drive.google.com/uc?id=${FILE_ID}" \
-            -O "$RUNNER_TEMP/storm4.nsp" \
-            --retries 3 \
-            --timeout 60
+            "https://drive.google.com/uc?id=${NSP_FILE_ID}" \
+            -O "$NSP_PATH" \
+            --retries 5 \
+            --timeout 120
 
-          test -s "$RUNNER_TEMP/storm4.nsp"
+          test -s "$NSP_PATH"
 
-          SIZE=$(stat -f%z "$RUNNER_TEMP/storm4.nsp")
+          SIZE=$(stat -f%z "$NSP_PATH")
+          SIZE_GB=$(awk -v s="$SIZE" 'BEGIN {printf "%.2f", s/1073741824}')
 
-          echo "NSP size: $SIZE bytes"
+          echo "NSP size: ${SIZE_GB} GB"
 
-          if [ "$SIZE" -lt 1000000000 ]; then
-            echo "NSP file is too small"
+          if [ "$SIZE" -lt 10000000000 ]; then
+            echo "ERROR: NSP is unexpectedly small."
             exit 1
           fi
 
-          MAGIC=$(head -c 4 "$RUNNER_TEMP/storm4.nsp")
+          MAGIC=$(python -c \
+            "print(open('$NSP_PATH','rb').read(4).decode('ascii'))")
 
           if [ "$MAGIC" != "PFS0" ]; then
-            echo "Invalid NSP container"
+            echo "ERROR: NSP magic is invalid: $MAGIC"
             exit 1
           fi
 
-          echo "NSP validation passed"
+          echo "NSP validation passed."
 
-      - name: Prepare game folder
-        run: |
-          set -euo pipefail
-
-          mkdir -p "$RUNNER_TEMP/storm4"
-
-          cp "$RUNNER_TEMP/storm4.nsp" \
-            "$RUNNER_TEMP/storm4/NarutoStorm4.nsp"
-
-          ls -lh "$RUNNER_TEMP/storm4/"
+          echo "=== Disk after NSP download ==="
+          df -h "$RUNNER_TEMP"
 
       - name: Build unsigned iOS IPA
+        shell: bash
         run: |
           set -euo pipefail
 
+          GAME_DIR="$RUNNER_TEMP/storm4"
+          IPA_PATH="$RUNNER_TEMP/NarutoStorm4.ipa"
+
+          mkdir -p "$GAME_DIR"
+
+          echo "=== Starting NXNative build ==="
+          echo "Title ID: $GAME_TITLE_ID"
+          echo "ROMFS mode: separate"
+          echo "Target: iOS"
+
           python3 scripts/build_ipa_from_nsp.py \
-            "$RUNNER_TEMP/storm4" \
+            "$GAME_DIR" \
             -k "$RUNNER_TEMP/prod.keys" \
-            --title-id 01003F800CF5C000 \
-            -o "$RUNNER_TEMP/NarutoStorm4.ipa" \
+            --title-id "$GAME_TITLE_ID" \
+            -o "$IPA_PATH" \
             --romfs separate \
-            --keep-extracted \
+            --no-keep-extracted \
             --progress lines
 
-          test -s "$RUNNER_TEMP/NarutoStorm4.ipa"
+          if [ ! -s "$IPA_PATH" ]; then
+            echo "ERROR: IPA was not generated."
+            exit 1
+          fi
 
-          echo "IPA build completed"
+          echo "=== IPA generated ==="
+          ls -lh "$IPA_PATH"
 
-          ls -lh "$RUNNER_TEMP/NarutoStorm4.ipa"
+          echo "=== Disk after build ==="
+          df -h "$RUNNER_TEMP"
+
+      - name: Validate IPA package
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IPA="$RUNNER_TEMP/NarutoStorm4.ipa"
+
+          unzip -t "$IPA"
+
+          unzip -l "$IPA" | grep -E 'Payload/[^/]+\.app/Info.plist'
+
+          echo "IPA archive validation passed."
 
       - name: Upload unsigned IPA
         if: always()
@@ -144,13 +235,17 @@ jobs:
             ${{ runner.temp }}/storm4/01003F800CF5C000_build/logs/
             ${{ runner.temp }}/storm4/01003F800CF5C000_build/profile/
             ${{ runner.temp }}/storm4/01003F800CF5C000_survey/
+          compression-level: 0
           retention-days: 7
           if-no-files-found: ignore
 
-      - name: Remove sensitive temporary files
+      - name: Cleanup temporary sensitive files
         if: always()
+        shell: bash
         run: |
-          rm -f "$RUNNER_TEMP/prod.keys"
-          rm -f "$RUNNER_TEMP/storm4.nsp"
+          set +e
 
-          echo "Temporary sensitive files removed"
+          rm -f "$RUNNER_TEMP/prod.keys"
+          rm -f "$RUNNER_TEMP/storm4/NarutoStorm4.nsp"
+
+          echo "Temporary keys and NSP removed."
