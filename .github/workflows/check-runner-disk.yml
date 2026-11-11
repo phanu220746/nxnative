@@ -118,3 +118,26 @@ jobs:
           fi
 
           echo "Disk inspection completed."
+
+      - name: Analyze macOS Storage Usage
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== Top-level storage usage ==="
+          du -xhd 1 /Users/runner 2>/dev/null | sort -h
+
+          echo "=== Xcode storage ==="
+          du -xhd 2 /Users/runner/Library/Developer 2>/dev/null | sort -h | tail -30
+
+          echo "=== Caches ==="
+          du -xhd 2 /Users/runner/Library/Caches 2>/dev/null | sort -h | tail -30
+
+          echo "=== Homebrew cache ==="
+          du -sh /opt/homebrew/var/cache 2>/dev/null || true
+
+          echo "=== Python cache ==="
+          du -sh /Users/runner/Library/Caches/pip 2>/dev/null || true
+
+          echo "=== Disk after analysis ==="
+          df -h
