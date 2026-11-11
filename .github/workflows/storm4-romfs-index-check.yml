@@ -19,7 +19,7 @@ jobs:
 
       - name: Download ROMFS ZIP
         run: |
-          gdown "1DzcDUo5lP_sHDuDiB832QuyLzltzLU6N" -O romfs.zip
+          gdown "1EBKEWK5_ttIHB95ydPoaesRNrYco51U4" -O romfs.zip
           test -s romfs.zip
 
       - name: Read and verify DMROMFS1 index
