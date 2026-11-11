@@ -1,0 +1,135 @@
+
+name: Naruto Storm 4 - Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    runs-on: xcode-27
+    timeout-minutes: 360
+
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+
+    steps:
+      - name: Checkout NXNative
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check Xcode and install Metal Toolchain
+        run: |
+          xcodebuild -version
+          xcodebuild -downloadComponent MetalToolchain
+
+      - name: Install build dependencies
+        run: |
+          brew install xcodegen zstd glslang
+          brew install --cask dotnet-sdk
+
+          dotnet --version
+          xcodegen --version
+
+          python -m pip install --upgrade pip
+          python -m pip install \
+            lz4 capstone fonttools nsz \
+            "backports.zstd; python_version < '3.14'"
+
+      - name: Install Google Drive downloader
+        run: |
+          python -m pip install gdown
+
+      - name: Prepare prod.keys
+        env:
+          PROD_KEYS: ${{ secrets.PROD_KEYS }}
+        run: |
+          if [ -z "$PROD_KEYS" ]; then
+            echo "PROD_KEYS secret is missing"
+            exit 1
+          fi
+
+          printf '%s' "$PROD_KEYS" > "$RUNNER_TEMP/prod.keys"
+          chmod 600 "$RUNNER_TEMP/prod.keys"
+
+      - name: Download Naruto Storm 4 NSP
+        run: |
+          FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
+
+          gdown \
+            "https://drive.google.com/uc?id=${FILE_ID}" \
+            -O "$RUNNER_TEMP/storm4.nsp" \
+            --retries 3 \
+            --timeout 60
+
+          test -s "$RUNNER_TEMP/storm4.nsp"
+
+          SIZE=$(stat -f%z "$RUNNER_TEMP/storm4.nsp")
+          echo "NSP size: $SIZE bytes"
+
+          if [ "$SIZE" -lt 1000000000 ]; then
+            echo "NSP file is too small"
+            exit 1
+          fi
+
+          MAGIC=$(head -c 4 "$RUNNER_TEMP/storm4.nsp")
+
+          if [ "$MAGIC" != "PFS0" ]; then
+            echo "Invalid NSP container"
+            exit 1
+          fi
+
+          echo "NSP validation passed"
+
+      - name: Prepare game folder
+        run: |
+          mkdir -p "$RUNNER_TEMP/storm4"
+          cp "$RUNNER_TEMP/storm4.nsp" \
+             "$RUNNER_TEMP/storm4/NarutoStorm4.nsp"
+
+      - name: Build unsigned iOS IPA
+        run: |
+          python3 scripts/build_ipa_from_nsp.py \
+            "$RUNNER_TEMP/storm4" \
+            -k "$RUNNER_TEMP/prod.keys" \
+            -o "$RUNNER_TEMP/NarutoStorm4.ipa" \
+            --romfs separate \
+            --keep-extracted \
+            --progress lines
+
+          test -s "$RUNNER_TEMP/NarutoStorm4.ipa"
+
+          echo "IPA build completed"
+          ls -lh "$RUNNER_TEMP/NarutoStorm4.ipa"
+
+      - name: Upload unsigned IPA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Naruto-Storm4-iOS-IPA
+          path: ${{ runner.temp }}/NarutoStorm4.ipa
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Naruto-Storm4-Build-Logs
+          path: |
+            ${{ runner.temp }}/storm4/01003F800CF5C000_build/logs/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Remove sensitive temporary files
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/prod.keys"
+          rm -f "$RUNNER_TEMP/storm4.nsp"
