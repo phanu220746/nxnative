@@ -19,9 +19,7 @@ jobs:
 
       - name: Download ROMFS ZIP from Google Drive
         run: |
-          gdown --fuzzy \
-            "https://drive.google.com/file/d/1DzcDUo5lP_sHDuDiB832QuyLzltzLU6N/view?usp=drivesdk" \
-            -O romfs.zip
+          gdown "1DzcDUo5lP_sHDuDiB832QuyLzltzLU6N" -O romfs.zip
 
           test -s romfs.zip
           ls -lh romfs.zip
@@ -42,7 +40,10 @@ jobs:
               report.append(s)
 
           if not zipfile.is_zipfile(path):
-              raise SystemExit("ERROR: Downloaded file is not a valid ZIP")
+              raise SystemExit(
+                  "ERROR: Downloaded file is not a valid ZIP. "
+                  "Check Google Drive sharing or download response."
+              )
 
           with zipfile.ZipFile(path) as z:
               entries = z.infolist()
