@@ -1,0 +1,120 @@
+
+name: Check GitHub Actions Disk Space
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-disk:
+    name: Inspect macOS Runner Storage
+    runs-on: xcode-27
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check Runner Information
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "================================"
+          echo " GITHUB ACTIONS RUNNER INFO"
+          echo "================================"
+
+          echo ""
+          echo "=== macOS Version ==="
+          sw_vers
+
+          echo ""
+          echo "=== CPU Architecture ==="
+          uname -m
+
+          echo ""
+          echo "=== Xcode Version ==="
+          xcodebuild -version
+
+          echo ""
+          echo "=== Runner Environment ==="
+          echo "RUNNER_TEMP: $RUNNER_TEMP"
+          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+
+      - name: Check Disk Space Before Build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo ""
+          echo "================================"
+          echo " DISK SPACE BEFORE BUILD"
+          echo "================================"
+
+          echo ""
+          echo "=== All Mounted Volumes ==="
+          df -h
+
+          echo ""
+          echo "=== Root Volume ==="
+          df -h /
+
+          echo ""
+          echo "=== Runner Temporary Directory ==="
+          df -h "$RUNNER_TEMP"
+
+          echo ""
+          echo "=== GitHub Workspace ==="
+          df -h "$GITHUB_WORKSPACE"
+
+          FREE_KB=$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $4}')
+          FREE_GB=$(awk -v kb="$FREE_KB" \
+            'BEGIN {printf "%.2f", kb/1024/1024}')
+
+          TOTAL_KB=$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $2}')
+          TOTAL_GB=$(awk -v kb="$TOTAL_KB" \
+            'BEGIN {printf "%.2f", kb/1024/1024}')
+
+          echo ""
+          echo "================================"
+          echo " STORAGE SUMMARY"
+          echo "================================"
+          echo "Total disk: ${TOTAL_GB} GB"
+          echo "Available disk: ${FREE_GB} GB"
+
+          {
+            echo "## GitHub Actions Disk Report"
+            echo ""
+            echo "| Item | Result |"
+            echo "|---|---:|"
+            echo "| Runner | xcode-27 |"
+            echo "| Total disk | ${TOTAL_GB} GB |"
+            echo "| Available disk | ${FREE_GB} GB |"
+            echo ""
+            echo "### Full disk information"
+            echo '```text'
+            df -h
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check Build Space Requirement
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FREE_KB=$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $4}')
+          FREE_GB=$(awk -v kb="$FREE_KB" \
+            'BEGIN {printf "%.2f", kb/1024/1024}')
+
+          echo "Available space: ${FREE_GB} GB"
+
+          if [ "$FREE_KB" -lt $((18 * 1024 * 1024)) ]; then
+            echo "::warning::Less than 18 GB free."
+            echo "Runner may not have enough storage for Naruto Storm 4."
+          else
+            echo "At least 18 GB is available."
+          fi
+
+          echo "Disk inspection completed."
