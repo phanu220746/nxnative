@@ -11,7 +11,7 @@ jobs:
   check-disk:
     name: Inspect macOS Runner Storage
     runs-on: xcode-27
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout Repository
@@ -20,7 +20,7 @@ jobs:
       - name: Check Runner Information
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           echo "================================"
           echo " GITHUB ACTIONS RUNNER INFO"
@@ -43,14 +43,13 @@ jobs:
           echo "RUNNER_TEMP: $RUNNER_TEMP"
           echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
 
-      - name: Check Disk Space Before Build
+      - name: Check Disk Space Before Analysis
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
-          echo ""
           echo "================================"
-          echo " DISK SPACE BEFORE BUILD"
+          echo " DISK SPACE BEFORE ANALYSIS"
           echo "================================"
 
           echo ""
@@ -102,7 +101,7 @@ jobs:
       - name: Check Build Space Requirement
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           FREE_KB=$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $4}')
           FREE_GB=$(awk -v kb="$FREE_KB" \
@@ -117,27 +116,157 @@ jobs:
             echo "At least 18 GB is available."
           fi
 
-          echo "Disk inspection completed."
-
-      - name: Analyze macOS Storage Usage
+      - name: Analyze Runner Home Storage
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
-          echo "=== Top-level storage usage ==="
+          echo "=== RUNNER HOME TOP LEVEL ==="
           du -xhd 1 /Users/runner 2>/dev/null | sort -h
 
-          echo "=== Xcode storage ==="
-          du -xhd 2 /Users/runner/Library/Developer 2>/dev/null | sort -h | tail -30
+      - name: Analyze Library Storage
+        shell: bash
+        run: |
+          set -uo pipefail
 
-          echo "=== Caches ==="
-          du -xhd 2 /Users/runner/Library/Caches 2>/dev/null | sort -h | tail -30
+          echo "=== LIBRARY BREAKDOWN ==="
+          du -xhd 1 /Users/runner/Library 2>/dev/null | sort -h
 
-          echo "=== Homebrew cache ==="
-          du -sh /opt/homebrew/var/cache 2>/dev/null || true
+          echo ""
+          echo "=== XCODE / DEVELOPER STORAGE ==="
+          du -xhd 2 /Users/runner/Library/Developer 2>/dev/null \
+            | sort -h | tail -40
 
-          echo "=== Python cache ==="
-          du -sh /Users/runner/Library/Caches/pip 2>/dev/null || true
+      - name: Analyze Xcode Storage
+        shell: bash
+        run: |
+          set -uo pipefail
 
-          echo "=== Disk after analysis ==="
+          echo "=== XCODE STORAGE DETAILS ==="
+
+          for p in \
+            /Users/runner/Library/Developer/Xcode/DerivedData \
+            /Users/runner/Library/Developer/Xcode/Archives \
+            "/Users/runner/Library/Developer/Xcode/iOS DeviceSupport" \
+            /Users/runner/Library/Developer/CoreSimulator \
+            /Applications/Xcode.app
+          do
+            if [ -e "$p" ]; then
+              echo ""
+              echo "--- $p ---"
+              du -sh "$p" 2>/dev/null || true
+            else
+              echo "NOT FOUND: $p"
+            fi
+          done
+
+      - name: Analyze Cache Storage
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          echo "=== CACHE BREAKDOWN ==="
+          du -xhd 2 /Users/runner/Library/Caches 2>/dev/null \
+            | sort -h | tail -50
+
+          echo ""
+          echo "=== PACKAGE CACHES ==="
+
+          for p in \
+            /Users/runner/Library/Caches/pip \
+            /Users/runner/Library/Caches/Homebrew \
+            /opt/homebrew/var/cache \
+            /Users/runner/.cache \
+            /Users/runner/.yarn \
+            /Users/runner/.gradle/caches \
+            /Users/runner/.npm
+          do
+            if [ -e "$p" ]; then
+              du -sh "$p" 2>/dev/null || true
+            else
+              echo "NOT FOUND: $p"
+            fi
+          done
+
+      - name: Analyze Toolchain Storage
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          echo "=== TOOLCHAIN STORAGE ==="
+
+          for p in \
+            /Users/runner/hostedtoolcache \
+            /Users/runner/.dotnet \
+            /opt/homebrew \
+            /Applications/Xcode.app \
+            /Library/Developer/CommandLineTools
+          do
+            if [ -e "$p" ]; then
+              du -sh "$p" 2>/dev/null || true
+            else
+              echo "NOT FOUND: $p"
+            fi
+          done
+
+      - name: Analyze Workspace and Temporary Files
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          echo "=== WORKSPACE STORAGE ==="
+          du -xhd 2 "$GITHUB_WORKSPACE" 2>/dev/null \
+            | sort -h | tail -40
+
+          echo ""
+          echo "=== RUNNER TEMPORARY DIRECTORY ==="
+          du -xhd 2 "$RUNNER_TEMP" 2>/dev/null \
+            | sort -h | tail -40
+
+      - name: Find Large Files
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          echo "=== TOP 50 FILES LARGER THAN 100 MB ==="
+
+          find /Users/runner -xdev -type f -size +100M \
+            -exec du -h {} + 2>/dev/null \
+            | sort -h | tail -50
+
+      - name: Final Disk Space Report
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          echo "================================"
+          echo " FINAL DISK SPACE"
+          echo "================================"
+
           df -h
+          echo ""
+          df -Pk "$RUNNER_TEMP"
+
+          FREE_KB=$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $4}')
+          FREE_GB=$(awk -v kb="$FREE_KB" \
+            'BEGIN {printf "%.2f", kb/1024/1024}')
+
+          echo ""
+          echo "Available after analysis: ${FREE_GB} GB"
+
+          {
+            echo ""
+            echo "## Final Storage Report"
+            echo ""
+            echo "- Available disk after analysis: **${FREE_GB} GB**"
+            echo ""
+            echo '```text'
+            df -h
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo ""
+          echo "================================"
+          echo " ANALYSIS COMPLETE"
+          echo " READ ONLY - NOTHING DELETED"
+          echo "================================"
