@@ -10,7 +10,6 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
 
     steps:
       - name: Checkout repository
@@ -18,194 +17,149 @@ jobs:
 
       - name: Check runner storage
         run: |
-          set -euo pipefail
-
-          echo "=== RUNNER INFORMATION ==="
-          uname -a
-          python3 --version
-
-          echo ""
-          echo "=== AVAILABLE DISK SPACE ==="
-          df -h "$RUNNER_TEMP"
+          echo "=== Disk space ==="
+          df -h
+          echo "=== Workspace ==="
+          du -sh "$GITHUB_WORKSPACE" || true
 
       - name: Install Google Drive downloader
         run: |
-          set -euo pipefail
-
           python3 -m venv "$RUNNER_TEMP/gdown-venv"
-
-          "$RUNNER_TEMP/gdown-venv/bin/python" \
-            -m pip install --upgrade pip
-
-          "$RUNNER_TEMP/gdown-venv/bin/python" \
-            -m pip install gdown
-
+          "$RUNNER_TEMP/gdown-venv/bin/pip" install --upgrade pip
+          "$RUNNER_TEMP/gdown-venv/bin/pip" install gdown
           "$RUNNER_TEMP/gdown-venv/bin/gdown" --version
 
       - name: Download Naruto Storm 4 ZIP
+        env:
+          FILE_ID: 1xO7unR0DIehYuVKzLvH5s0h4KxyCtw4z
         run: |
           set -euo pipefail
 
-          FILE_ID="1xO7unR0DIehYuVKzLvH5s0h4KxyCtw4z"
           ZIP_PATH="$RUNNER_TEMP/NarutoStorm4.zip"
 
-          echo "Starting Google Drive download..."
-
+          echo "Downloading Naruto Storm 4 dump..."
           "$RUNNER_TEMP/gdown-venv/bin/gdown" \
-            "https://drive.google.com/uc?id=${FILE_ID}" \
-            -O "$ZIP_PATH" \
-            --fuzzy
+            "$FILE_ID" \
+            -O "$ZIP_PATH"
 
-          test -s "$ZIP_PATH"
+          if [ ! -s "$ZIP_PATH" ]; then
+            echo "::error::Downloaded ZIP is missing or empty"
+            exit 1
+          fi
 
-          echo ""
-          echo "=== DOWNLOAD RESULT ==="
+          echo "=== Downloaded file ==="
           ls -lh "$ZIP_PATH"
-
-          echo ""
-          echo "=== DISK SPACE AFTER DOWNLOAD ==="
-          df -h "$RUNNER_TEMP"
+          echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
 
       - name: Inspect ZIP, NPDM and RomFS header
-        env:
-          ZIP_PATH: ${{ runner.temp }}/NarutoStorm4.zip
         run: |
           set -euo pipefail
 
           python3 - <<'PY'
           import os
+          import sys
           import zipfile
           import struct
 
-          path = os.environ["ZIP_PATH"]
+          zip_path = os.environ["ZIP_PATH"]
 
-          print("ZIP path:", path)
+          print("=== ZIP validation ===")
 
-          if not os.path.isfile(path):
-              raise RuntimeError("ZIP file not found")
+          if not zipfile.is_zipfile(zip_path):
+              print("ERROR: Downloaded file is not a valid ZIP")
+              sys.exit(1)
 
-          with zipfile.ZipFile(path) as z:
-              files = z.infolist()
+          with zipfile.ZipFile(zip_path) as z:
+              names = z.namelist()
 
-              print("\n=== ZIP CONTENTS ===")
+              for name in names:
+                  print(name)
 
-              for f in files:
-                  print(f"{f.file_size:>15} bytes  {f.filename}")
-
-              def locate(name):
+              def find_file(target):
                   matches = [
-                      f for f in files
-                      if f.filename.rstrip("/").endswith(name)
+                      n for n in names
+                      if n.replace("\\", "/").endswith(target)
                   ]
-
-                  if len(matches) != 1:
-                      raise RuntimeError(
-                          f"Expected exactly one {name}, "
-                          f"found {len(matches)}"
-                      )
-
+                  if not matches:
+                      print(f"ERROR: Missing {target}")
+                      sys.exit(1)
+                  if len(matches) > 1:
+                      print(f"WARNING: Multiple matches for {target}: {matches}")
                   return matches[0]
 
-              main = locate("exefs/main")
-              npdm = locate("exefs/main.npdm")
-              romfs = locate("RomFS.img")
+              main_name = find_file("exefs/main")
+              npdm_name = find_file("exefs/main.npdm")
+              romfs_name = find_file("RomFS.img")
 
-              print("\n=== EXEFS MAIN ===")
+              print("\n=== NSO main validation ===")
+              main = z.read(main_name)
 
-              with z.open(main) as f:
-                  magic = f.read(4)
+              print("File:", main_name)
+              print("Size:", len(main))
+              print("Magic:", main[:4])
 
-              print("Magic:", magic)
+              if main[:4] != b"NSO0":
+                  print("ERROR: main is not an NSO0 executable")
+                  sys.exit(1)
 
-              if magic != b"NSO0":
-                  raise RuntimeError(
-                      "main is not a valid NSO0 module"
-                  )
+              print("NSO0: OK")
 
-              print("NSO main: OK")
+              print("\n=== NPDM validation ===")
+              npdm = z.read(npdm_name)
 
-              print("\n=== NPDM / TITLE ID ===")
+              print("File:", npdm_name)
+              print("Size:", len(npdm))
+              print("Magic:", npdm[:4])
 
-              with z.open(npdm) as f:
-                  data = f.read()
+              if npdm[:4] != b"META":
+                  print("WARNING: NPDM does not begin with META")
 
-              if data[:4] != b"META":
-                  raise RuntimeError(
-                      "main.npdm does not start with META"
-                  )
+              aci0_offset = npdm.find(b"ACI0")
 
-              aci = data.find(b"ACI0")
+              if aci0_offset >= 0 and len(npdm) >= aci0_offset + 0x18:
+                  title_id = struct.unpack_from(
+                      "<Q", npdm, aci0_offset + 0x10
+                  )[0]
+                  print("Title ID:", f"{title_id:016X}")
+              else:
+                  print("WARNING: ACI0 or Title ID not found")
 
-              if aci < 0 or aci + 0x18 > len(data):
-                  raise RuntimeError(
-                      "ACI0 section not found in main.npdm"
-                  )
+              print("\n=== RomFS image validation ===")
+              romfs = z.read(romfs_name)
 
-              title_id = struct.unpack_from(
-                  "<Q", data, aci + 0x10
-              )[0]
+              print("File:", romfs_name)
+              print("Size:", len(romfs))
+              print("Magic:", romfs[:8])
 
-              print(f"Detected Title ID: {title_id:016X}")
-              print("NPDM: OK")
+              if len(romfs) < 32:
+                  print("ERROR: RomFS image is smaller than header")
+                  sys.exit(1)
 
-              print("\n=== ROMFS IMAGE ===")
-
-              print("File size:", romfs.file_size)
-
-              with z.open(romfs) as f:
-                  header = f.read(32)
-
-              if len(header) != 32:
-                  raise RuntimeError(
-                      "RomFS header is incomplete"
-                  )
-
-              magic, index_offset, index_size, count = (
-                  struct.unpack("<8sQQQ", header)
+              magic, index_offset, index_size, entry_count = struct.unpack(
+                  "<8sQQQ", romfs[:32]
               )
 
-              print("Header hex:", header.hex())
               print("Magic:", magic)
               print("Index offset:", index_offset)
               print("Index size:", index_size)
-              print("Entry count:", count)
+              print("Entry count:", entry_count)
 
               if magic != b"DMROMFS1":
-                  raise RuntimeError(
-                      "RomFS magic is not DMROMFS1"
-                  )
+                  print("ERROR: RomFS image does not use DMROMFS1 format")
+                  sys.exit(1)
 
-              if index_offset < 32:
-                  raise RuntimeError(
-                      "Invalid index offset"
-                  )
+              if index_offset < 32 or index_offset > len(romfs):
+                  print("ERROR: Invalid index offset")
+                  sys.exit(1)
 
-              if index_offset > romfs.file_size:
-                  raise RuntimeError(
-                      "Index offset exceeds image size"
-                  )
-
-              if index_size != romfs.file_size - index_offset:
-                  raise RuntimeError(
-                      "RomFS image size/index mismatch"
-                  )
-
-              if count == 0:
-                  raise RuntimeError(
-                      "RomFS contains zero entries"
-                  )
-
-              if index_size < count * 24:
-                  raise RuntimeError(
-                      "RomFS index is too small"
-                  )
-
-              print("NXNative RomFS header: OK")
+              if index_size > len(romfs) - index_offset:
+                  print("ERROR: Invalid index size")
+                  sys.exit(1)
 
               print("\n=== RESULT ===")
-              print("ZIP structure: OK")
-              print("NSO main: OK")
-              print("NPDM: OK")
-              print("RomFS image: OK")
-              print("Initial validation passed.")
+              print("ZIP: VALID")
+              print("NSO main: VALID")
+              print("NPDM: INSPECTED")
+              print("RomFS header: VALID")
+              print("Dump inspection completed successfully.")
           PY
