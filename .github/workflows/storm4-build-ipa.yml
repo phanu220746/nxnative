@@ -1,3 +1,4 @@
+
 name: Naruto Storm 4 - Build iOS IPA
 
 on:
@@ -12,7 +13,7 @@ jobs:
     timeout-minutes: 360
 
     env:
-      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
 
     steps:
       - name: Checkout NXNative
@@ -20,22 +21,19 @@ jobs:
 
       - name: Free up disk space (macOS)
         run: |
-          echo "=== Free disk space before cleanup ==="
+          echo "=== Disk space before cleanup ==="
           df -h
 
-          echo "Deleting unavailable iOS simulators..."
           xcrun simctl delete unavailable || true
           rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
 
-          echo "Cleaning Homebrew cache..."
           brew cleanup --prune=all || true
           rm -rf ~/Library/Caches/Homebrew/* || true
           rm -rf ~/Library/Caches/pip/* || true
 
-          echo "Removing unneeded large directories..."
           sudo rm -rf /usr/local/share/boost || true
 
-          echo "=== Free disk space after cleanup ==="
+          echo "=== Disk space after cleanup ==="
           df -h
 
       - name: Setup Python
@@ -46,7 +44,7 @@ jobs:
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: "10.0.x"
 
       - name: Check Xcode and Metal Toolchain
         run: |
@@ -76,6 +74,8 @@ jobs:
         env:
           PROD_KEYS: ${{ secrets.PROD_KEYS }}
         run: |
+          set -euo pipefail
+
           if [ -z "$PROD_KEYS" ]; then
             echo "PROD_KEYS secret is missing"
             exit 1
@@ -86,21 +86,121 @@ jobs:
 
           echo "prod.keys prepared"
 
+      # Download the existing extracted Dump first.
+      # This avoids keeping both the ZIP and NSP on disk at the same time.
+      - name: Download existing Naruto Storm 4 Dump
+        run: |
+          set -euo pipefail
+
+          FILE_ID="1DzcDUo5lP_sHDuDiB832QuyLzltzLU6N"
+
+          mkdir -p "$RUNNER_TEMP/dump-download"
+
+          echo "Downloading existing Dump ZIP..."
+
+          gdown \
+            "https://drive.google.com/uc?id=${FILE_ID}" \
+            -O "$RUNNER_TEMP/naruto-dump.zip" \
+            --retries 3 \
+            --timeout 120
+
+          test -s "$RUNNER_TEMP/naruto-dump.zip"
+
+          echo "Dump ZIP downloaded:"
+          ls -lh "$RUNNER_TEMP/naruto-dump.zip"
+
+          echo "Extracting Dump ZIP..."
+
+          unzip -q "$RUNNER_TEMP/naruto-dump.zip" \
+            -d "$RUNNER_TEMP/dump-download"
+
+          DUMP_ROOT="$RUNNER_TEMP/dump-download/NarutoStorm4"
+
+          if [ ! -f "$DUMP_ROOT/ExeFS/main" ]; then
+            echo "ERROR: ExeFS/main not found in Dump ZIP"
+            find "$RUNNER_TEMP/dump-download" -maxdepth 4 -print
+            exit 1
+          fi
+
+          if [ ! -f "$DUMP_ROOT/RomFS.img" ]; then
+            echo "ERROR: RomFS.img not found in Dump ZIP"
+            exit 1
+          fi
+
+          echo "Dump ZIP structure verified"
+
+      # Place the existing Dump where NXNative checks its extraction cache.
+      - name: Prepare NXNative extraction cache
+        run: |
+          set -euo pipefail
+
+          GAME_DIR="$RUNNER_TEMP/storm4"
+          CACHE_DIR="$GAME_DIR/01003F800CF5C000_build/extract/v0"
+          DUMP_ROOT="$RUNNER_TEMP/dump-download/NarutoStorm4"
+
+          mkdir -p "$CACHE_DIR"
+
+          cp -R "$DUMP_ROOT/." "$CACHE_DIR/"
+
+          echo "=== Cached Dump structure ==="
+          ls -lah "$CACHE_DIR"
+          ls -lah "$CACHE_DIR/ExeFS"
+
+          test -f "$CACHE_DIR/ExeFS/main"
+          test -f "$CACHE_DIR/RomFS.img"
+          test -f "$CACHE_DIR/control.nacp"
+
+          echo "NXNative cache files are present"
+
+      # NXNative uses the same RomFS reader to validate the marker.
+      - name: Validate cached RomFS
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "dm/tools")
+          import romfs
+
+          dump = Path(
+              "$RUNNER_TEMP/01003F800CF5C000_build/extract/v0"
+          )
+          PY
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+
+      # Delete the ZIP and temporary extraction folder to save disk space.
+      - name: Remove temporary Dump ZIP
+        run: |
+          set -euo pipefail
+
+          rm -f "$RUNNER_TEMP/naruto-dump.zip"
+          rm -rf "$RUNNER_TEMP/dump-download"
+
+          echo "Temporary ZIP removed"
+          df -h
+
       - name: Download Naruto Storm 4 NSP
         run: |
           set -euo pipefail
 
-          FILE_ID="FILE_ID="1X3iMtcMhmxRyuVOAomSDJyRGdbjoSOa5""
+          FILE_ID="1X3iMtcMhmxRyuVOAomSDJyRGdbjoSOa5"
+
+          mkdir -p "$RUNNER_TEMP/storm4"
+
+          echo "Downloading Naruto Storm 4 NSP..."
 
           gdown \
             "https://drive.google.com/uc?id=${FILE_ID}" \
-            -O "$RUNNER_TEMP/storm4.nsp" \
+            -O "$RUNNER_TEMP/storm4/NarutoStorm4.nsp" \
             --retries 3 \
-            --timeout 60
+            --timeout 120
 
-          test -s "$RUNNER_TEMP/storm4.nsp"
+          test -s "$RUNNER_TEMP/storm4/NarutoStorm4.nsp"
 
-          SIZE=$(stat -f%z "$RUNNER_TEMP/storm4.nsp")
+          SIZE=$(stat -f%z "$RUNNER_TEMP/storm4/NarutoStorm4.nsp")
 
           echo "NSP size: $SIZE bytes"
 
@@ -109,7 +209,7 @@ jobs:
             exit 1
           fi
 
-          MAGIC=$(head -c 4 "$RUNNER_TEMP/storm4.nsp")
+          MAGIC=$(head -c 4 "$RUNNER_TEMP/storm4/NarutoStorm4.nsp")
 
           if [ "$MAGIC" != "PFS0" ]; then
             echo "Invalid NSP container"
@@ -117,18 +217,6 @@ jobs:
           fi
 
           echo "NSP validation passed"
-
-      - name: Prepare game folder
-        run: |
-          set -euo pipefail
-
-          mkdir -p "$RUNNER_TEMP/storm4"
-
-          # ใช้ mv แทน cp เพื่อประหยัดพื้นที่ดิสก์
-          mv "$RUNNER_TEMP/storm4.nsp" \
-            "$RUNNER_TEMP/storm4/NarutoStorm4.nsp"
-
-          ls -lh "$RUNNER_TEMP/storm4/"
 
       - name: Build unsigned iOS IPA
         run: |
@@ -140,12 +228,20 @@ jobs:
             --title-id 01003F800CF5C000 \
             -o "$RUNNER_TEMP/NarutoStorm4.ipa" \
             --romfs separate \
-            --progress lines
+            --keep-extracted \
+            --progress lines \
+            2>&1 | tee "$RUNNER_TEMP/storm4-build.log"
+
+          echo "Checking whether NXNative reused the existing Dump..."
+
+          if ! grep -qi "reusing the extracted" "$RUNNER_TEMP/storm4-build.log"; then
+            echo "ERROR: NXNative did not report reuse of the existing Dump"
+            exit 1
+          fi
 
           test -s "$RUNNER_TEMP/NarutoStorm4.ipa"
 
           echo "IPA build completed"
-
           ls -lh "$RUNNER_TEMP/NarutoStorm4.ipa"
 
       - name: Upload unsigned IPA
@@ -164,6 +260,7 @@ jobs:
         with:
           name: Naruto-Storm4-Build-Logs
           path: |
+            ${{ runner.temp }}/storm4-build.log
             ${{ runner.temp }}/storm4/01003F800CF5C000_build/logs/
             ${{ runner.temp }}/storm4/01003F800CF5C000_build/profile/
             ${{ runner.temp }}/storm4/01003F800CF5C000_survey/
@@ -174,6 +271,41 @@ jobs:
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/prod.keys"
-          rm -f "$RUNNER_TEMP/storm4.nsp"
 
           echo "Temporary sensitive files removed"
+          
+      - name: Validate cached RomFS
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "dm/tools")
+          import romfs
+
+          dump = Path(
+              __import__("os").environ["RUNNER_TEMP"]
+          ) / "storm4/01003F800CF5C000_build/extract/v0"
+
+          if not (dump / "ExeFS/main").is_file():
+              raise SystemExit("Missing ExeFS/main")
+
+          if not (dump / "RomFS.img").is_file():
+              raise SystemExit("Missing RomFS.img")
+
+          root = romfs.source(dump)
+          marker = root / "data/sim/stage2.cpk"
+
+          if not marker.exists():
+              raise SystemExit(
+                  f"RomFS marker not found: {marker}"
+              )
+
+          print("RomFS marker verified:", marker)
+          print("Existing Dump is ready for NXNative reuse")
+          PY
+
