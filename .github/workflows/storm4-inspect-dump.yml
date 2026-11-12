@@ -38,6 +38,7 @@ jobs:
           ZIP_PATH="$RUNNER_TEMP/NarutoStorm4.zip"
 
           echo "Downloading Naruto Storm 4 dump..."
+
           "$RUNNER_TEMP/gdown-venv/bin/gdown" \
             "$FILE_ID" \
             -O "$ZIP_PATH"
@@ -49,9 +50,10 @@ jobs:
 
           echo "=== Downloaded file ==="
           ls -lh "$ZIP_PATH"
+
           echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
 
-      - name: Inspect ZIP, NPDM and RomFS header
+      - name: Inspect ZIP, ExeFS, NPDM and RomFS
         run: |
           set -euo pipefail
 
@@ -72,71 +74,109 @@ jobs:
           with zipfile.ZipFile(zip_path) as z:
               names = z.namelist()
 
+              print("\n=== ZIP contents ===")
               for name in names:
                   print(name)
 
+              # Normalize paths and ignore case differences.
+              normalized = {
+                  name.replace("\\", "/").strip("/").lower(): name
+                  for name in names
+                  if not name.endswith("/")
+              }
+
               def find_file(target):
+                  key = target.replace("\\", "/").strip("/").lower()
+
                   matches = [
-                      n for n in names
-                      if n.replace("\\", "/").endswith(target)
+                      original
+                      for normalized_name, original in normalized.items()
+                      if normalized_name == key
+                      or normalized_name.endswith("/" + key)
                   ]
+
                   if not matches:
                       print(f"ERROR: Missing {target}")
                       sys.exit(1)
+
                   if len(matches) > 1:
-                      print(f"WARNING: Multiple matches for {target}: {matches}")
+                      print(
+                          f"ERROR: Multiple matches for {target}: {matches}"
+                      )
+                      sys.exit(1)
+
                   return matches[0]
 
               main_name = find_file("exefs/main")
               npdm_name = find_file("exefs/main.npdm")
-              romfs_name = find_file("RomFS.img")
+              romfs_name = find_file("romfs.img")
 
               print("\n=== NSO main validation ===")
-              main = z.read(main_name)
+
+              main_info = z.getinfo(main_name)
 
               print("File:", main_name)
-              print("Size:", len(main))
-              print("Magic:", main[:4])
+              print("Uncompressed size:", main_info.file_size)
 
-              if main[:4] != b"NSO0":
+              with z.open(main_name) as f:
+                  main_magic = f.read(4)
+
+              print("Magic:", main_magic)
+
+              if main_magic != b"NSO0":
                   print("ERROR: main is not an NSO0 executable")
                   sys.exit(1)
 
               print("NSO0: OK")
 
               print("\n=== NPDM validation ===")
-              npdm = z.read(npdm_name)
+
+              npdm_info = z.getinfo(npdm_name)
 
               print("File:", npdm_name)
-              print("Size:", len(npdm))
+              print("Uncompressed size:", npdm_info.file_size)
+
+              with z.open(npdm_name) as f:
+                  npdm = f.read()
+
               print("Magic:", npdm[:4])
 
               if npdm[:4] != b"META":
-                  print("WARNING: NPDM does not begin with META")
+                  print("ERROR: NPDM does not begin with META")
+                  sys.exit(1)
 
               aci0_offset = npdm.find(b"ACI0")
 
-              if aci0_offset >= 0 and len(npdm) >= aci0_offset + 0x18:
-                  title_id = struct.unpack_from(
-                      "<Q", npdm, aci0_offset + 0x10
-                  )[0]
-                  print("Title ID:", f"{title_id:016X}")
-              else:
-                  print("WARNING: ACI0 or Title ID not found")
+              if aci0_offset < 0:
+                  print("ERROR: ACI0 not found in NPDM")
+                  sys.exit(1)
+
+              if len(npdm) < aci0_offset + 0x18:
+                  print("ERROR: NPDM is too small for Title ID")
+                  sys.exit(1)
+
+              title_id = struct.unpack_from(
+                  "<Q", npdm, aci0_offset + 0x10
+              )[0]
+
+              print("Title ID:", f"{title_id:016X}")
 
               print("\n=== RomFS image validation ===")
-              romfs = z.read(romfs_name)
+
+              romfs_info = z.getinfo(romfs_name)
 
               print("File:", romfs_name)
-              print("Size:", len(romfs))
-              print("Magic:", romfs[:8])
+              print("Uncompressed size:", romfs_info.file_size)
 
-              if len(romfs) < 32:
+              if romfs_info.file_size < 32:
                   print("ERROR: RomFS image is smaller than header")
                   sys.exit(1)
 
+              with z.open(romfs_name) as f:
+                  header = f.read(32)
+
               magic, index_offset, index_size, entry_count = struct.unpack(
-                  "<8sQQQ", romfs[:32]
+                  "<8sQQQ", header
               )
 
               print("Magic:", magic)
@@ -145,21 +185,30 @@ jobs:
               print("Entry count:", entry_count)
 
               if magic != b"DMROMFS1":
-                  print("ERROR: RomFS image does not use DMROMFS1 format")
+                  print("ERROR: Unexpected RomFS image format")
                   sys.exit(1)
 
-              if index_offset < 32 or index_offset > len(romfs):
+              if index_offset < 32:
                   print("ERROR: Invalid index offset")
                   sys.exit(1)
 
-              if index_size > len(romfs) - index_offset:
-                  print("ERROR: Invalid index size")
+              if index_offset > romfs_info.file_size:
+                  print("ERROR: Index offset exceeds file size")
                   sys.exit(1)
+
+              if index_size > romfs_info.file_size - index_offset:
+                  print("ERROR: Index size exceeds file boundary")
+                  sys.exit(1)
+
+              if entry_count == 0:
+                  print("WARNING: RomFS contains zero entries")
 
               print("\n=== RESULT ===")
               print("ZIP: VALID")
-              print("NSO main: VALID")
-              print("NPDM: INSPECTED")
+              print("ExeFS main: VALID")
+              print("NPDM: VALID")
+              print("Title ID:", f"{title_id:016X}")
               print("RomFS header: VALID")
               print("Dump inspection completed successfully.")
+
           PY
