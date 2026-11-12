@@ -33,7 +33,7 @@ jobs:
 
       - name: Download existing dump
         env:
-          FILE_ID: 1xO7unR0DIehYuVKzLvH5s0h4KxyCtw4z
+          FILE_ID: 1DzcDUo5lP_sHDuDiB832QuyLzltzLU6N
         run: |
           set -euo pipefail
           gdown "$FILE_ID" -O "$RUNNER_TEMP/NarutoStorm4.zip"
