@@ -1,0 +1,136 @@
+
+name: Naruto Storm 4 - Inspect Existing Dump
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Google Drive downloader
+        run: |
+          python3 -m pip install --user gdown
+          echo "$HOME/Library/Python/3.*/bin" >> "$GITHUB_PATH"
+
+      - name: Download Naruto Storm 4 ZIP
+        run: |
+          set -euo pipefail
+
+          FILE_ID="1xO7unR0DIehYuVKzLvH5s0h4KxyCtw4z"
+
+          gdown \
+            "https://drive.google.com/uc?id=${FILE_ID}" \
+            -O "$RUNNER_TEMP/NarutoStorm4.zip" \
+            --fuzzy \
+            --retries 3
+
+          test -s "$RUNNER_TEMP/NarutoStorm4.zip"
+
+          echo "ZIP downloaded:"
+          ls -lh "$RUNNER_TEMP/NarutoStorm4.zip"
+
+      - name: Inspect ZIP, NPDM and RomFS header
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          import struct
+          import sys
+
+          path = "/Users/runner/work/_temp/NarutoStorm4.zip"
+
+          with zipfile.ZipFile(path) as z:
+              files = z.infolist()
+
+              print("=== ZIP CONTENTS ===")
+              for f in files:
+                  print(f"{f.file_size:>15} bytes  {f.filename}")
+
+              def locate(name):
+                  matches = [
+                      f for f in files
+                      if f.filename.rstrip("/").endswith(name)
+                  ]
+                  if len(matches) != 1:
+                      raise RuntimeError(
+                          f"Expected exactly one {name}, found {len(matches)}"
+                      )
+                  return matches[0]
+
+              main = locate("exefs/main")
+              npdm = locate("exefs/main.npdm")
+              romfs = locate("RomFS.img")
+
+              print("\n=== EXEFS MAIN ===")
+              with z.open(main) as f:
+                  magic = f.read(4)
+              print("Magic:", magic)
+              if magic != b"NSO0":
+                  raise RuntimeError("main is not a valid NSO0 module")
+
+              print("\n=== NPDM / TITLE ID ===")
+              with z.open(npdm) as f:
+                  data = f.read()
+
+              if data[:4] != b"META":
+                  raise RuntimeError("main.npdm does not start with META")
+
+              aci = data.find(b"ACI0")
+              if aci < 0 or aci + 0x18 > len(data):
+                  raise RuntimeError("ACI0 section not found in main.npdm")
+
+              title_id = struct.unpack_from("<Q", data, aci + 0x10)[0]
+              print(f"Title ID: {title_id:016X}")
+
+              expected = 0x01003F800CF5C000
+              if title_id != expected:
+                  raise RuntimeError(
+                      f"Title ID mismatch: expected {expected:016X}"
+                  )
+
+              print("\n=== ROMFS IMAGE ===")
+              print("File size:", romfs.file_size)
+
+              with z.open(romfs) as f:
+                  header = f.read(32)
+
+              if len(header) != 32:
+                  raise RuntimeError("RomFS header is incomplete")
+
+              magic, index_offset, index_size, count = struct.unpack(
+                  "<8sQQQ", header
+              )
+
+              print("Header hex:", header.hex())
+              print("Magic:", magic)
+              print("Index offset:", index_offset)
+              print("Index size:", index_size)
+              print("Entry count:", count)
+
+              if magic != b"DMROMFS1":
+                  raise RuntimeError("RomFS magic is not DMROMFS1")
+
+              if index_offset < 32:
+                  raise RuntimeError("Invalid index offset")
+
+              if index_offset + index_size != romfs.file_size:
+                  raise RuntimeError("RomFS image size/index mismatch")
+
+              if count == 0 or index_size < count * 24:
+                  raise RuntimeError("Invalid RomFS index")
+
+              print("\n=== RESULT ===")
+              print("ZIP structure: OK")
+              print("NSO main: OK")
+              print("NPDM Title ID: OK")
+              print("NXNative RomFS header: OK")
+              print("Initial validation passed.")
+          PY
