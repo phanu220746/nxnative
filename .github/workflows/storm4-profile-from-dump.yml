@@ -1,0 +1,299 @@
+
+name: Storm 4 - Analyze Existing Dump and ROMFS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout NXNative
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check available disk
+        run: |
+          set -euo pipefail
+          echo "=== Disk space before download ==="
+          df -h "$RUNNER_TEMP"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+
+          python -m pip install --upgrade pip
+          python -m pip install \
+            gdown \
+            lz4 \
+            "capstone>=5,<6" \
+            fonttools \
+            backports.zstd
+
+      - name: Download existing Naruto Storm 4 ZIP
+        env:
+          FILE_ID: 1xO7unR0DIehYuVKzLvH5s0h4KxyCtw4z
+        run: |
+          set -euo pipefail
+
+          ZIP="$RUNNER_TEMP/NarutoStorm4.zip"
+
+          gdown "$FILE_ID" -O "$ZIP"
+
+          test -s "$ZIP"
+
+          echo "=== Downloaded ZIP ==="
+          ls -lh "$ZIP"
+
+          echo "ZIP_PATH=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Extract only ExeFS and RomFS image
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$RUNNER_TEMP/storm4/ExeFS"
+
+          python3 - <<'PY'
+          import os
+          import sys
+          import zipfile
+          import shutil
+          from pathlib import Path
+
+          zip_path = os.environ["ZIP_PATH"]
+          output = Path(os.environ["RUNNER_TEMP"]) / "storm4"
+          exefs_out = output / "ExeFS"
+          romfs_out = output / "RomFS.img"
+
+          def norm(name):
+              return name.replace("\\", "/").strip("/").lower()
+
+          def find_unique(files, suffix):
+              matches = [
+                  info for info in files
+                  if not info.is_dir()
+                  and norm(info.filename).endswith(suffix)
+              ]
+
+              if len(matches) != 1:
+                  raise RuntimeError(
+                      f"Expected exactly one {suffix}, found {len(matches)}"
+                  )
+
+              return matches[0]
+
+          def safe_relative(name):
+              p = Path(name)
+              if p.is_absolute() or ".." in p.parts:
+                  raise RuntimeError(f"Unsafe ZIP path: {name}")
+              return p
+
+          with zipfile.ZipFile(zip_path) as z:
+              files = z.infolist()
+
+              main = find_unique(files, "exefs/main")
+              romfs = find_unique(files, "romfs.img")
+              npdm = find_unique(files, "exefs/main.npdm")
+
+              exefs_prefix = main.filename.replace("\\", "/").rsplit("/", 1)[0]
+              prefix = exefs_prefix.rstrip("/") + "/"
+
+              print("=== Selected files ===")
+              print("main:", main.filename)
+              print("main.npdm:", npdm.filename)
+              print("RomFS:", romfs.filename)
+
+              exefs_members = [
+                  info for info in files
+                  if not info.is_dir()
+                  and info.filename.replace("\\", "/").startswith(prefix)
+              ]
+
+              if not exefs_members:
+                  raise RuntimeError("ExeFS is empty")
+
+              for info in exefs_members:
+                  normalized = info.filename.replace("\\", "/")
+                  relative = normalized[len(prefix):]
+                  rel = safe_relative(relative)
+
+                  if not rel.parts:
+                      continue
+
+                  destination = exefs_out / rel
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+
+                  with z.open(info) as src, destination.open("wb") as dst:
+                      shutil.copyfileobj(src, dst, length=8 * 1024 * 1024)
+
+                  if destination.stat().st_size != info.file_size:
+                      raise RuntimeError(
+                          f"Size mismatch: {info.filename}"
+                      )
+
+                  print(
+                      f"Extracted ExeFS: {relative} "
+                      f"({info.file_size} bytes)"
+                  )
+
+              print("\nExtracting RomFS using 8 MiB buffer...")
+              with z.open(romfs) as src, romfs_out.open("wb") as dst:
+                  shutil.copyfileobj(src, dst, length=8 * 1024 * 1024)
+
+              if romfs_out.stat().st_size != romfs.file_size:
+                  raise RuntimeError("RomFS size mismatch")
+
+              print("RomFS extracted:", romfs_out.stat().st_size, "bytes")
+
+          print("\nExtraction completed.")
+          PY
+
+          echo "STORM4_DIR=$RUNNER_TEMP/storm4" >> "$GITHUB_ENV"
+
+          echo "=== Disk space after extraction ==="
+          df -h "$RUNNER_TEMP"
+
+      - name: Validate executable and Title ID
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+
+          root = Path(__import__("os").environ["STORM4_DIR"])
+          exefs = root / "ExeFS"
+
+          main = exefs / "main"
+          npdm = exefs / "main.npdm"
+          romfs = root / "RomFS.img"
+
+          for p in (main, npdm, romfs):
+              if not p.is_file() or p.stat().st_size == 0:
+                  raise SystemExit(f"Missing or empty file: {p}")
+
+          with main.open("rb") as f:
+              magic = f.read(4)
+
+          if magic != b"NSO0":
+              raise SystemExit("main is not NSO0")
+
+          data = npdm.read_bytes()
+
+          if data[:4] != b"META":
+              raise SystemExit("Invalid NPDM META header")
+
+          aci0 = data.find(b"ACI0")
+
+          if aci0 < 0 or len(data) < aci0 + 0x18:
+              raise SystemExit("NPDM ACI0 or Title ID is missing")
+
+          title_id = struct.unpack_from("<Q", data, aci0 + 0x10)[0]
+          print("Title ID:", f"{title_id:016X}")
+
+          if title_id != 0x01003F800CF5C000:
+              raise SystemExit("Unexpected Naruto Storm 4 Title ID")
+
+          print("NSO0: OK")
+          print("NPDM: OK")
+          print("Title ID: OK")
+          print("RomFS size:", romfs.stat().st_size)
+          PY
+
+      - name: Validate complete DMROMFS1 index
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(
+              0,
+              str(Path.cwd() / "dm" / "tools")
+          )
+
+          import romfs
+
+          image_path = (
+              Path(os.environ["STORM4_DIR"]) / "RomFS.img"
+          )
+
+          print("Opening DMROMFS1 image...")
+          print("This validates the complete index, not all file payloads.")
+
+          image = romfs.Image(image_path)
+
+          print("\n=== ROMFS INDEX RESULT ===")
+          print("Magic: DMROMFS1")
+          print("Entries:", image.count)
+          print("Index bytes:", len(image.index))
+          print("Name pool bytes:", len(image.index) - image.pool)
+
+          root_children = image.children(0)
+          print("Root entries:", len(root_children))
+
+          if image.count != 949:
+              print(
+                  "WARNING: Entry count differs from the earlier header check."
+              )
+
+          print("\nFull index validation: PASSED")
+          PY
+
+      - name: Analyze ExeFS and ROMFS for provisional profile
+        run: |
+          set -euo pipefail
+
+          python3 dm/games/profile_guess.py \
+            "$STORM4_DIR/ExeFS" \
+            "$STORM4_DIR/RomFS.img" \
+            2>&1 | tee "$RUNNER_TEMP/storm4-profile-report.txt"
+
+          test -s "$RUNNER_TEMP/storm4-profile-report.txt"
+
+      - name: Save analysis summary
+        if: always()
+        run: |
+          {
+            echo "Naruto Storm 4 - Dump Analysis"
+            echo "=============================="
+            echo "Title ID: 01003F800CF5C000"
+            echo "Source: Existing Google Drive ZIP"
+            echo
+            echo "ROMFS index validation and profile analysis logs:"
+            if [ -f "$RUNNER_TEMP/storm4-profile-report.txt" ]; then
+              cat "$RUNNER_TEMP/storm4-profile-report.txt"
+            else
+              echo "Profile analysis report was not generated."
+            fi
+          } > "$RUNNER_TEMP/NarutoStorm4-Analysis.txt"
+
+      - name: Upload analysis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Naruto-Storm4-Profile-Analysis
+          path: |
+            ${{ runner.temp }}/NarutoStorm4-Analysis.txt
+            ${{ runner.temp }}/storm4-profile-report.txt
+          compression-level: 6
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Remove temporary game files
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/storm4"
+          rm -f "$RUNNER_TEMP/NarutoStorm4.zip"
+          echo "Temporary game files removed."
