@@ -1,116 +1,4 @@
 
-name: Storm 4 - Generate Provisional Profile
-
-on:
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-jobs:
-  profile:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 180
-
-    steps:
-      - name: Checkout NXNative
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install \
-            gdown \
-            lz4 \
-            "capstone>=5,<6" \
-            fonttools \
-            backports.zstd
-
-      - name: Download existing dump
-        env:
-          FILE_ID: 1DzcDUo5lP_sHDuDiB832QuyLzltzLU6N
-        run: |
-          set -euo pipefail
-          gdown "$FILE_ID" -O "$RUNNER_TEMP/NarutoStorm4.zip"
-          test -s "$RUNNER_TEMP/NarutoStorm4.zip"
-
-      - name: Extract profile inputs
-        run: |
-          set -euo pipefail
-
-          mkdir -p "$RUNNER_TEMP/storm4/ExeFS"
-
-          python3 - <<'PY'
-          import os
-          import zipfile
-          import shutil
-          from pathlib import Path
-
-          zpath = Path(os.environ["RUNNER_TEMP"]) / "NarutoStorm4.zip"
-          out = Path(os.environ["RUNNER_TEMP"]) / "storm4"
-
-          def norm(s):
-              return s.replace("\\", "/").strip("/")
-
-          with zipfile.ZipFile(zpath) as z:
-              files = z.infolist()
-
-              def unique(suffix):
-                  found = [
-                      x for x in files
-                      if not x.is_dir()
-                      and norm(x.filename).lower().endswith(suffix.lower())
-                  ]
-                  if len(found) != 1:
-                      raise RuntimeError(
-                          f"Expected one {suffix}, found {len(found)}"
-                      )
-                  return found[0]
-
-              main = unique("exefs/main")
-              romfs = unique("romfs.img")
-              control = unique("control.nacp")
-
-              prefix = norm(main.filename).rsplit("/", 1)[0] + "/"
-
-              for item in files:
-                  name = norm(item.filename)
-                  if item.is_dir() or not name.startswith(prefix):
-                      continue
-
-                  rel = Path(name[len(prefix):])
-                  if rel.is_absolute() or ".." in rel.parts:
-                      raise RuntimeError("Unsafe ZIP path")
-
-                  dst = out / "ExeFS" / rel
-                  dst.parent.mkdir(parents=True, exist_ok=True)
-
-                  with z.open(item) as src, dst.open("wb") as target:
-                      shutil.copyfileobj(src, target, 8 * 1024 * 1024)
-
-                  if dst.stat().st_size != item.file_size:
-                      raise RuntimeError(f"Size mismatch: {rel}")
-
-              for item, destination in [
-                  (romfs, out / "RomFS.img"),
-                  (control, out / "control.nacp"),
-              ]:
-                  with z.open(item) as src, destination.open("wb") as dst:
-                      shutil.copyfileobj(src, dst, 8 * 1024 * 1024)
-
-                  if destination.stat().st_size != item.file_size:
-                      raise RuntimeError(
-                          f"Size mismatch: {destination.name}"
-                      )
-
-          print("Profile inputs extracted successfully")
-          PY
-
       - name: Generate provisional profile
         run: |
           set -euo pipefail
@@ -135,72 +23,130 @@ jobs:
           import profile_guess as pg
           import nacp
 
-          # Verify the actual executable identity.
+          # 1. Verify required input files.
+          for path in (
+              exefs / "main",
+              exefs / "main.npdm",
+              romfs,
+              control,
+          ):
+              if not path.is_file():
+                  raise FileNotFoundError(
+                      f"Required game file missing: {path}"
+                  )
+
+          # 2. Verify executable identity.
           npdm = (exefs / "main.npdm").read_bytes()
+
           if npdm[:4] != b"META":
-              raise RuntimeError("Invalid NPDM")
+              raise RuntimeError("Invalid NPDM: META header missing")
 
           pos = npdm.find(b"ACI0")
+
           if pos < 0:
-              raise RuntimeError("ACI0 missing")
+              raise RuntimeError("Invalid NPDM: ACI0 missing")
 
           title_id = struct.unpack_from(
               "<Q", npdm, pos + 0x10
           )[0]
 
           expected = 0x01003F800CF5C000
+
           if title_id != expected:
               raise RuntimeError(
                   f"Wrong Title ID: {title_id:016X}"
               )
 
-          # Read all profile facts from ExeFS and DMROMFS1.
+          print(f"Verified Title ID: {title_id:016X}")
+
+          # 3. Analyze the actual ExeFS and ROMFS.
           print("Analyzing ExeFS and ROMFS...")
-          facts = pg.facts_of(exefs, romfs)
 
-          facts["survey"] = "Generated from verified existing dump"
-          facts["name"] = nacp.name(control) or "Naruto Storm 4"
-          facts["display"] = nacp.version(control) or "Base Game"
-          facts["version"] = "v0"
+          F = pg.facts_of(exefs, romfs)
 
-          # Use NXNative's own profile writer.
+          print("Modules:", ", ".join(sorted(F["mods"])))
+          print("ROMFS files:", F["romfs"]["n"])
+          print("ROMFS bytes:", F["romfs"]["bytes"])
+
+          # 4. Import NXNative's original profile writer.
           builder_path = root / "scripts/build_ipa_from_nsp.py"
+
           spec = importlib.util.spec_from_file_location(
               "nxnative_builder", builder_path
           )
+
+          if spec is None or spec.loader is None:
+              raise RuntimeError(
+                  "Cannot load NXNative profile builder"
+              )
+
           builder = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(builder)
 
-          profile = temp / "profile" / f"{title_id:016X}"
-          builder.write_profile(profile, title_id, facts)
+          # The writer refers to pg as a module global.
+          builder.pg = pg
 
-          print("\n=== PROFILE GENERATED ===")
+          # 5. Build the exact data structure expected by
+          #    NXNative write_profile(pdir, app, f).
+          profile_data = {
+              "F": F,
+              "name": nacp.name(control) or "Naruto Storm 4",
+              "display": nacp.version(control) or "Base Game",
+              "version": "v0",
+              "survey": "Generated from verified existing dump",
+          }
+
+          # 6. Generate the provisional profile.
+          profile = (
+              temp / "profile" / f"{title_id:016X}"
+          )
+
+          print("Generating provisional profile...")
+          print("Output:", profile)
+
+          builder.write_profile(
+              profile,
+              title_id,
+              profile_data
+          )
+
+          # 7. Verify every expected output before upload.
+          expected_files = [
+              "game.tsv",
+              *builder.EMPTY_TABLES.keys(),
+          ]
+
+          for filename in expected_files:
+              output = profile / filename
+
+              if not output.is_file():
+                  raise RuntimeError(
+                      f"Profile output missing: {filename}"
+                  )
+
+              if output.stat().st_size == 0:
+                  raise RuntimeError(
+                      f"Profile output is empty: {filename}"
+                  )
+
+              print(
+                  f"Verified: {filename} "
+                  f"({output.stat().st_size} bytes)"
+              )
+
+          print("\n=== PROFILE GENERATED SUCCESSFULLY ===")
           print("Title ID:", f"{title_id:016X}")
-          print("Name:", facts["name"])
-          print("Version:", facts["version"])
-          print("Display:", facts["display"])
+          print("Name:", profile_data["name"])
+          print("Version:", profile_data["version"])
+          print("Display:", profile_data["display"])
           print("Profile:", profile)
 
-          print("\n=== GENERATED GAME.TSV ===")
+          print("\n=== GAME.TSV ===")
           print((profile / "game.tsv").read_text())
 
-          print("\n=== GENERATED TABLES ===")
-          for p in sorted(profile.glob("*.tsv")):
-              print(p.name, p.stat().st_size, "bytes")
+          print("\n=== PROFILE TABLES ===")
+
+          for path in sorted(profile.glob("*.tsv")):
+              print(path.name, path.stat().st_size, "bytes")
+
           PY
-
-      - name: Upload provisional profile
-        uses: actions/upload-artifact@v4
-        with:
-          name: Naruto-Storm4-Provisional-Profile
-          path: |
-            ${{ runner.temp }}/profile/
-          compression-level: 6
-          retention-days: 7
-          if-no-files-found: error
-
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -rf "$RUNNER_TEMP/storm4"
-          rm -f "$RUNNER_TEMP/NarutoStorm4.zip"
