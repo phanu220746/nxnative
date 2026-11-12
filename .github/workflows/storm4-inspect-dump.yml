@@ -9,12 +9,24 @@ permissions:
 
 jobs:
   inspect:
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     timeout-minutes: 120
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Check runner storage
+        run: |
+          set -euo pipefail
+
+          echo "=== RUNNER INFORMATION ==="
+          uname -a
+          python3 --version
+
+          echo ""
+          echo "=== AVAILABLE DISK SPACE ==="
+          df -h "$RUNNER_TEMP"
 
       - name: Install Google Drive downloader
         run: |
@@ -22,8 +34,11 @@ jobs:
 
           python3 -m venv "$RUNNER_TEMP/gdown-venv"
 
-          "$RUNNER_TEMP/gdown-venv/bin/python" -m pip install --upgrade pip
-          "$RUNNER_TEMP/gdown-venv/bin/python" -m pip install gdown
+          "$RUNNER_TEMP/gdown-venv/bin/python" \
+            -m pip install --upgrade pip
+
+          "$RUNNER_TEMP/gdown-venv/bin/python" \
+            -m pip install gdown
 
           "$RUNNER_TEMP/gdown-venv/bin/gdown" --version
 
@@ -43,8 +58,13 @@ jobs:
 
           test -s "$ZIP_PATH"
 
-          echo "ZIP downloaded successfully:"
+          echo ""
+          echo "=== DOWNLOAD RESULT ==="
           ls -lh "$ZIP_PATH"
+
+          echo ""
+          echo "=== DISK SPACE AFTER DOWNLOAD ==="
+          df -h "$RUNNER_TEMP"
 
       - name: Inspect ZIP, NPDM and RomFS header
         env:
@@ -126,7 +146,6 @@ jobs:
               )[0]
 
               print(f"Detected Title ID: {title_id:016X}")
-
               print("NPDM: OK")
 
               print("\n=== ROMFS IMAGE ===")
