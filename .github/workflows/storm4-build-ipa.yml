@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build-ipa:
@@ -37,7 +38,7 @@ jobs:
           rm -rf ~/Library/Developer/Xcode/DerivedData/* || true
           rm -rf ~/Library/Developer/Xcode/Archives/* || true
 
-          echo "--- 3. Removing unused pre-installed heavy tools (Android SDK & Boost) ---"
+          echo "--- 3. Removing unused pre-installed heavy tools ---"
           sudo rm -rf /usr/local/lib/android || true
           sudo rm -rf /opt/android || true
           sudo rm -rf /usr/local/share/boost || true
@@ -76,7 +77,7 @@ jobs:
 
       # 6. Dependencies
       - name: Install build dependencies
-      run: |
+        run: |
           set -euo pipefail
 
           brew install xcodegen zstd glslang
@@ -96,6 +97,7 @@ jobs:
       # 7. Google Drive downloader
       - name: Install Google Drive downloader
         run: |
+          set -euo pipefail
           python -m pip install gdown
 
       # 8. Prepare prod.keys
@@ -144,11 +146,23 @@ jobs:
           echo "=== game.tsv ==="
           cat "$PROFILE/game.tsv"
 
-      # 11. Download NSP (UPDATED ID)
+          echo "=== RomFS marker ==="
+
+          MARKER=$(awk -F '\t' '$1 == "romfs_marker" {print $2; exit}' "$PROFILE/game.tsv")
+
+          if [ -z "$MARKER" ]; then
+            echo "ERROR: romfs_marker missing from game.tsv"
+            exit 1
+          fi
+
+          echo "Expected marker: $MARKER"
+
+      # 11. Download Naruto Storm 4 NSP
       - name: Download Naruto Storm 4 NSP
         run: |
           set -euo pipefail
 
+          # NSP Google Drive ID
           FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
 
           mkdir -p "$RUNNER_TEMP/storm4"
@@ -187,6 +201,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Existing Dump ZIP Google Drive ID
           FILE_ID="1xO7unR0DIehYuVKzLvH5s0h4KxyCtw4z"
 
           echo "Downloading existing Dump ZIP..."
@@ -199,9 +214,16 @@ jobs:
 
           test -s "$RUNNER_TEMP/naruto-dump.zip"
 
+          if ! python3 -c \
+            "import zipfile,sys; sys.exit(0 if zipfile.is_zipfile(sys.argv[1]) else 1)" \
+            "$RUNNER_TEMP/naruto-dump.zip"; then
+            echo "ERROR: Downloaded Dump is not a valid ZIP file"
+            exit 1
+          fi
+
           ls -lh "$RUNNER_TEMP/naruto-dump.zip"
 
-      # 13. Extract directly into NXNative cache & remove ZIP immediately
+      # 13. Prepare NXNative extraction cache
       - name: Prepare NXNative Extraction Cache
         run: |
           set -euo pipefail
@@ -213,7 +235,6 @@ jobs:
           from pathlib import Path
 
           temp = Path(os.environ["RUNNER_TEMP"])
-
           archive = temp / "naruto-dump.zip"
 
           cache = (
@@ -257,8 +278,11 @@ jobs:
               prefix = norm(main.filename).rsplit("/", 1)[0] + "/"
 
               print("ExeFS prefix:", prefix)
+              print("Main file:", main.filename)
+              print("RomFS file:", romfs.filename)
+              print("Control file:", control.filename)
 
-              # Extract all ExeFS files into the cache.
+              # Extract ExeFS files
               for item in entries:
                   name = norm(item.filename)
 
@@ -269,9 +293,12 @@ jobs:
                   rel = Path(relative)
 
                   if rel.is_absolute() or ".." in rel.parts:
-                      raise RuntimeError("Unsafe ZIP path")
+                      raise RuntimeError(
+                          f"Unsafe ZIP path: {item.filename}"
+                      )
 
                   destination = cache / "ExeFS" / rel
+
                   destination.parent.mkdir(
                       parents=True,
                       exist_ok=True
@@ -290,7 +317,7 @@ jobs:
                           f"Size mismatch: {destination}"
                       )
 
-              # Copy RomFS and control data.
+              # Extract RomFS and control data
               for item, destination in [
                   (romfs, cache / "RomFS.img"),
                   (control, cache / "control.nacp"),
@@ -308,7 +335,7 @@ jobs:
                           f"Size mismatch: {destination}"
                       )
 
-              # Icon is optional.
+              # Icon is optional
               icons = [
                   item for item in entries
                   if not item.is_dir()
@@ -320,7 +347,7 @@ jobs:
                       with (cache / "icon.jpg").open("wb") as target:
                           shutil.copyfileobj(source, target)
 
-          # Required files.
+          # Verify required files
           required = [
               cache / "ExeFS" / "main",
               cache / "ExeFS" / "main.npdm",
@@ -330,7 +357,9 @@ jobs:
 
           for path in required:
               if not path.is_file():
-                  raise RuntimeError(f"Missing required file: {path}")
+                  raise RuntimeError(
+                      f"Missing required file: {path}"
+                  )
 
           print("\n=== Existing Dump prepared ===")
 
@@ -340,30 +369,40 @@ jobs:
           print("\nCache:", cache)
           PY
 
-          # Remove ZIP immediately after extraction.
+          # Remove ZIP after successful extraction
           rm -f "$RUNNER_TEMP/naruto-dump.zip"
-          echo "Temporary Dump ZIP removed immediately"
+
+          echo "Temporary Dump ZIP removed"
           df -h
 
-      # 14. Validate the custom RomFS image and marker
+      # 14. Validate cached RomFS against the profile
       - name: Validate Cached RomFS
         run: |
           set -euo pipefail
 
           python3 - <<'PY'
           import sys
-          from pathlib import Path
           import os
+          from pathlib import Path
 
           sys.path.insert(0, "dm/tools")
           import romfs
 
+          temp = Path(os.environ["RUNNER_TEMP"])
+
           dump = (
-              Path(os.environ["RUNNER_TEMP"])
+              temp
               / "storm4"
               / "01003F800CF5C000_build"
               / "extract"
               / "v0"
+          )
+
+          profile_file = (
+              temp
+              / "profile"
+              / "01003F800CF5C000"
+              / "game.tsv"
           )
 
           image = dump / "RomFS.img"
@@ -371,6 +410,7 @@ jobs:
           if not image.is_file():
               raise SystemExit("RomFS.img missing")
 
+          # Verify the custom RomFS image header
           with image.open("rb") as f:
               magic = f.read(8)
 
@@ -379,17 +419,34 @@ jobs:
                   f"Invalid custom RomFS image header: {magic!r}"
               )
 
+          # Read the actual marker from game.tsv
+          marker = None
+
+          for line in profile_file.read_text(
+              encoding="utf-8"
+          ).splitlines():
+              fields = line.split("\t", 1)
+
+              if len(fields) == 2 and fields[0].strip() == "romfs_marker":
+                  marker = fields[1].strip().lstrip("/")
+                  break
+
+          if not marker:
+              raise SystemExit(
+                  "romfs_marker missing from provisional profile"
+              )
+
           root = romfs.source(dump)
+          marker_path = root / marker
 
-          marker = root / "data/sim/stage2.cpk"
-
-          if not marker.exists():
+          if not marker_path.exists():
               raise SystemExit(
                   f"RomFS marker not found: {marker}"
               )
 
           print("DMROMFS1 header verified")
-          print("RomFS marker verified:", marker)
+          print("Profile marker verified:", marker)
+          print("Marker path:", marker_path)
           print("Existing Dump is ready for NXNative reuse")
           PY
 
@@ -426,8 +483,18 @@ jobs:
             exit 1
           fi
 
+          ROMFS="$RUNNER_TEMP/storm4/01003F800CF5C000_build/extract/v0/RomFS.img"
+
+          if [ ! -s "$ROMFS" ]; then
+            echo "ERROR: Separate RomFS image is missing"
+            exit 1
+          fi
+
           echo "=== IPA BUILD SUCCESS ==="
           ls -lh "$RUNNER_TEMP/NarutoStorm4.ipa"
+
+          echo "=== SEPARATE ROMFS ==="
+          ls -lh "$ROMFS"
 
       # 16. Upload IPA
       - name: Upload Naruto Storm 4 IPA
@@ -440,7 +507,18 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # 17. Upload logs and profile
+      # 17. Upload separate RomFS
+      - name: Upload Naruto Storm 4 RomFS
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Naruto-Storm4-RomFS
+          path: ${{ runner.temp }}/storm4/01003F800CF5C000_build/extract/v0/RomFS.img
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # 18. Upload build logs and profile
       - name: Upload Build Logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -451,10 +529,11 @@ jobs:
             ${{ runner.temp }}/storm4/01003F800CF5C000_build/logs/
             ${{ runner.temp }}/storm4/01003F800CF5C000_build/profile/
             ${{ runner.temp }}/storm4/01003F800CF5C000_survey/
+            ${{ runner.temp }}/profile/01003F800CF5C000/
           retention-days: 7
           if-no-files-found: ignore
 
-      # 18. Cleanup sensitive files
+      # 19. Cleanup sensitive files
       - name: Remove Sensitive Temporary Files
         if: always()
         run: |
