@@ -1,3 +1,4 @@
+
 name: Naruto Storm 4 - Build iOS IPA
 
 on:
@@ -16,76 +17,51 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
 
     steps:
-      # 1. Checkout NXNative
       - name: Checkout NXNative
         uses: actions/checkout@v4
 
-      # 2. Free disk space
       - name: Free up disk space
         run: |
           set -euo pipefail
-
-          echo "=== Disk space before cleanup ==="
           df -h
-
-          echo "--- 1. Cleaning Xcode Simulators & Runtimes ---"
           xcrun simctl delete unavailable || true
           sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
           rm -rf ~/Library/Developer/CoreSimulator/Devices/* || true
-
-          echo "--- 2. Cleaning Xcode DerivedData & Archives ---"
           rm -rf ~/Library/Developer/Xcode/DerivedData/* || true
           rm -rf ~/Library/Developer/Xcode/Archives/* || true
-
-          echo "--- 3. Removing unused pre-installed heavy tools ---"
           sudo rm -rf /usr/local/lib/android || true
           sudo rm -rf /opt/android || true
           sudo rm -rf /usr/local/share/boost || true
-
-          echo "--- 4. Cleaning .NET & NuGet Caches ---"
           dotnet nuget locals all --clear || true
-
-          echo "--- 5. Cleaning Homebrew & Package Caches ---"
           brew cleanup --prune=all || true
           rm -rf ~/Library/Caches/Homebrew/* || true
           rm -rf ~/Library/Caches/pip/* || true
           rm -rf ~/.npm/_cacache || true
-
-          echo "=== Disk space after cleanup ==="
           df -h
 
-      # 3. Python
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # 4. .NET
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
 
-      # 5. Xcode
       - name: Check Xcode and Metal Toolchain
         run: |
           set -euo pipefail
-
           xcodebuild -version
           xcodebuild -downloadComponent MetalToolchain
 
-      # 6. Dependencies
       - name: Install build dependencies
         run: |
           set -euo pipefail
-
           brew install xcodegen zstd glslang
-
           dotnet --version
           xcodegen --version
-
           python -m pip install --upgrade pip
-
           python -m pip install \
             lz4 \
             capstone \
@@ -93,35 +69,30 @@ jobs:
             nsz \
             "backports.zstd; python_version < '3.14'"
 
-      # 7. Google Drive downloader
       - name: Install Google Drive downloader
         run: |
           set -euo pipefail
           python -m pip install gdown
 
-      # 8. Prepare prod.keys
       - name: Prepare prod.keys
         env:
           PROD_KEYS: ${{ secrets.PROD_KEYS }}
         run: |
           set -euo pipefail
-
           if [ -z "$PROD_KEYS" ]; then
             echo "ERROR: PROD_KEYS secret is missing"
             exit 1
           fi
-
           printf '%s' "$PROD_KEYS" > "$RUNNER_TEMP/prod.keys"
           chmod 600 "$RUNNER_TEMP/prod.keys"
-
           echo "prod.keys prepared"
 
-      # 9. Download Naruto Storm 4 NSP
+      # Updated NSP Google Drive ID
       - name: Download Naruto Storm 4 NSP
         run: |
           set -euo pipefail
 
-          FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
+          FILE_ID="1X3iMtcMhmxRyuVOAomSDJyRGdbjoSOa5"
 
           mkdir -p "$RUNNER_TEMP/storm4"
 
@@ -136,7 +107,6 @@ jobs:
           test -s "$RUNNER_TEMP/storm4/NarutoStorm4.nsp"
 
           SIZE=$(stat -f%z "$RUNNER_TEMP/storm4/NarutoStorm4.nsp")
-
           echo "NSP size: $SIZE bytes"
 
           if [ "$SIZE" -lt 1000000000 ]; then
@@ -154,7 +124,6 @@ jobs:
 
           echo "NSP validation passed"
 
-      # 10. Download existing Dump ZIP
       - name: Download Existing Naruto Storm 4 Dump
         run: |
           set -euo pipefail
@@ -180,7 +149,6 @@ jobs:
 
           ls -lh "$RUNNER_TEMP/naruto-dump.zip"
 
-      # 11. Prepare NXNative extraction cache
       - name: Prepare NXNative Extraction Cache
         run: |
           set -euo pipefail
@@ -239,7 +207,6 @@ jobs:
               print("RomFS file:", romfs.filename)
               print("Control file:", control.filename)
 
-              # Extract ExeFS files
               for item in entries:
                   name = norm(item.filename)
 
@@ -255,7 +222,6 @@ jobs:
                       )
 
                   destination = cache / "ExeFS" / rel
-
                   destination.parent.mkdir(
                       parents=True,
                       exist_ok=True
@@ -274,7 +240,6 @@ jobs:
                           f"Size mismatch: {destination}"
                       )
 
-              # Extract RomFS and control data
               for item, destination in [
                   (romfs, cache / "RomFS.img"),
                   (control, cache / "control.nacp"),
@@ -292,7 +257,6 @@ jobs:
                           f"Size mismatch: {destination}"
                       )
 
-              # Icon is optional
               icons = [
                   item for item in entries
                   if not item.is_dir()
@@ -304,7 +268,6 @@ jobs:
                       with (cache / "icon.jpg").open("wb") as target:
                           shutil.copyfileobj(source, target)
 
-          # Verify required files
           required = [
               cache / "ExeFS" / "main",
               cache / "ExeFS" / "main.npdm",
@@ -327,11 +290,9 @@ jobs:
           PY
 
           rm -f "$RUNNER_TEMP/naruto-dump.zip"
-
           echo "Temporary Dump ZIP removed"
           df -h
 
-      # 12. Validate cached RomFS
       - name: Validate Cached RomFS
         run: |
           set -euo pipefail
@@ -371,7 +332,6 @@ jobs:
               )
 
           marker = "data/sim/stage2.cpk"
-
           root = romfs.source(dump)
           marker_path = root / marker
 
@@ -386,7 +346,6 @@ jobs:
           print("Existing Dump is ready for NXNative reuse")
           PY
 
-      # 13. Build IPA using existing Dump
       - name: Build Unsigned iOS IPA
         run: |
           set -euo pipefail
@@ -429,7 +388,6 @@ jobs:
           echo "=== SEPARATE ROMFS ==="
           ls -lh "$ROMFS"
 
-      # 14. Upload IPA
       - name: Upload Naruto Storm 4 IPA
         if: always()
         uses: actions/upload-artifact@v4
@@ -440,7 +398,6 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # 15. Upload separate RomFS
       - name: Upload Naruto Storm 4 RomFS
         if: always()
         uses: actions/upload-artifact@v4
@@ -451,7 +408,6 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # 16. Upload build logs and generated profile
       - name: Upload Build Logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -465,10 +421,8 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # 17. Cleanup sensitive files
       - name: Remove Sensitive Temporary Files
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/prod.keys"
-
           echo "Temporary sensitive files removed"
