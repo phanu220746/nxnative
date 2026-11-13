@@ -1,14 +1,19 @@
-
-// Horizon kernel system calls (triggered by the SDK runtime once the SDK is loaded). Only what the P1 boot chain needs is implemented: memory layout + heap + query + debug output + timing.
+// Horizon kernel system calls (triggered by the SDK runtime once the SDK is loaded).
+// Only what the P1 boot chain needs is implemented: memory layout + heap + query + debug output + timing.
 // Register convention: inputs w1.. / outputs w0=Result, x1=value (GetInfo / SetHeapSize), consistent with the public Horizon ABI.
+
 #include "dm.h"
+
 #include <sys/mman.h>
 #include <errno.h>
 #include <unistd.h>
 #include <sched.h>
 #include <time.h>
 #include <stdatomic.h>
+
 #include <mach/mach.h>
+#include <mach/mach_vm.h>
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
