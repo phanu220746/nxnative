@@ -76,7 +76,7 @@ jobs:
 
       # 6. Dependencies
       - name: Install build dependencies
-        run: |
+      run: |
           set -euo pipefail
 
           brew install xcodegen zstd glslang
@@ -144,12 +144,12 @@ jobs:
           echo "=== game.tsv ==="
           cat "$PROFILE/game.tsv"
 
-      # 11. Download NSP
+      # 11. Download NSP (UPDATED ID)
       - name: Download Naruto Storm 4 NSP
         run: |
           set -euo pipefail
 
-          FILE_ID="1X3iMtcMhmxRyuVOAomSDJyRGdbjoSOa5"
+          FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
 
           mkdir -p "$RUNNER_TEMP/storm4"
 
@@ -176,6 +176,7 @@ jobs:
 
           if [ "$MAGIC" != "PFS0" ]; then
             echo "ERROR: Invalid NSP container"
+            echo "Detected magic: $MAGIC"
             exit 1
           fi
 
@@ -186,7 +187,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
+          FILE_ID="1xO7unR0DIehYuVKzLvH5s0h4KxyCtw4z"
 
           echo "Downloading existing Dump ZIP..."
 
@@ -339,7 +340,7 @@ jobs:
           print("\nCache:", cache)
           PY
 
-          # ลบไฟล์ ZIP ทันทีหลังแตกไฟล์เสร็จเพื่อคืนพื้นที่
+          # Remove ZIP immediately after extraction.
           rm -f "$RUNNER_TEMP/naruto-dump.zip"
           echo "Temporary Dump ZIP removed immediately"
           df -h
@@ -351,14 +352,14 @@ jobs:
 
           python3 - <<'PY'
           import sys
-          import struct
           from pathlib import Path
+          import os
 
           sys.path.insert(0, "dm/tools")
           import romfs
 
           dump = (
-              Path(__import__("os").environ["RUNNER_TEMP"])
+              Path(os.environ["RUNNER_TEMP"])
               / "storm4"
               / "01003F800CF5C000_build"
               / "extract"
@@ -439,7 +440,7 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # 17. Upload Build Logs
+      # 17. Upload logs and profile
       - name: Upload Build Logs
         if: always()
         uses: actions/upload-artifact@v4
