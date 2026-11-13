@@ -41,9 +41,36 @@ static void mem_init_once(void) {
     // a game reserves unchanged, for measuring its address regions on the Mac (the NSP script's heap check); an iPhone has no room for more than the profile's
     size_t alias = DM_GAME_MEM_ALIAS; const char *as = getenv("DM_ALIAS_SIZE");
     if (as && *as) { alias = (size_t)strtoull(as, NULL, 0); if (alias < 0x10000000 || (alias & (pg - 1))) die("DM_ALIAS_SIZE %s: at least 256 MB, in whole host pages", as); }
-    g_reserve = RESERVE - DM_GAME_MEM_ALIAS + alias;
-    g_as = mmap(NULL, g_reserve, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-    if (g_as == MAP_FAILED) die("reserve guest AS");
+  
+g_reserve = RESERVE - DM_GAME_MEM_ALIAS + alias;
+
+LOG("[mem] reserve request: reserve=%#llx (%llu bytes), profile_reserve=%#llx, profile_alias=%#llx, runtime_alias=%#llx, stack=%#llx, page=%#zx",
+    (unsigned long long)g_reserve,
+    (unsigned long long)g_reserve,
+    (unsigned long long)RESERVE,
+    (unsigned long long)DM_GAME_MEM_ALIAS,
+    (unsigned long long)alias,
+    (unsigned long long)DM_GAME_MEM_STACK,
+    pg);
+
+g_as = mmap(NULL, g_reserve, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+
+if (g_as == MAP_FAILED) {
+    int mmap_errno = errno;
+
+    LOG("[mem] mmap guest AS FAILED: reserve=%#llx (%llu bytes), errno=%d, profile_reserve=%#llx, profile_alias=%#llx, runtime_alias=%#llx, stack=%#llx, page=%#zx",
+        (unsigned long long)g_reserve,
+        (unsigned long long)g_reserve,
+        mmap_errno,
+        (unsigned long long)RESERVE,
+        (unsigned long long)DM_GAME_MEM_ALIAS,
+        (unsigned long long)alias,
+        (unsigned long long)DM_GAME_MEM_STACK,
+        pg);
+
+    die("reserve guest AS failed: errno=%d", mmap_errno);
+}
+
     // Fixed partition (all inside the reserved block): alias 2.875 GB, stack 256 MB, heap the remaining 1.625 GB.
     // In newer SDKs the AddressRegionManager always takes 0x3fe00000 (~1 GB) at the start of the alias region as its node area (sdk 0x134728) before handing out regions; with a 512 MB alias region the very first AllocateAddressRegion fails (0x1803).
     // SMBW also defines a 1792000 KB (1.75 GB) VirtualAddressMemory in HeapDef (System/HeapSize): it is subtracted from the memory pool before the heap is opened (SetHeapSize asks for only 0x5be00000),
