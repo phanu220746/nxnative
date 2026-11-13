@@ -154,7 +154,7 @@ jobs:
 
           echo "NSP validation passed"
 
-      # 10. Download existing Dump ZIP (NEW FILE ID)
+      # 10. Download existing Dump ZIP
       - name: Download Existing Naruto Storm 4 Dump
         run: |
           set -euo pipefail
@@ -394,6 +394,7 @@ jobs:
           python3 scripts/build_ipa_from_nsp.py \
             "$RUNNER_TEMP/storm4" \
             -k "$RUNNER_TEMP/prod.keys" \
+            --title-id 01003F800CF5C000 \
             --package v0 \
             -o "$RUNNER_TEMP/NarutoStorm4.ipa" \
             --romfs separate \
