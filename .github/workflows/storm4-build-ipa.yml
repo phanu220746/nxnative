@@ -1,4 +1,3 @@
-
 name: Naruto Storm 4 - Build iOS IPA
 
 on:
@@ -14,462 +13,461 @@ jobs:
     timeout-minutes: 360
 
     env:
-  DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
 
-steps:
-  # 1. Checkout NXNative
-  - name: Checkout NXNative
-    uses: actions/checkout@v4
+    steps:
+      # 1. Checkout NXNative
+      - name: Checkout NXNative
+        uses: actions/checkout@v4
 
-  # 2. Free disk space
-  - name: Free up disk space
-    run: |
-      set -euo pipefail
+      # 2. Free disk space
+      - name: Free up disk space
+        run: |
+          set -euo pipefail
 
-      echo "=== Disk space before cleanup ==="
-      df -h
+          echo "=== Disk space before cleanup ==="
+          df -h
 
-      echo "--- 1. Cleaning Xcode Simulators & Runtimes ---"
-      xcrun simctl delete unavailable || true
-      sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
-      rm -rf ~/Library/Developer/CoreSimulator/Devices/* || true
+          echo "--- 1. Cleaning Xcode Simulators & Runtimes ---"
+          xcrun simctl delete unavailable || true
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
+          rm -rf ~/Library/Developer/CoreSimulator/Devices/* || true
 
-      echo "--- 2. Cleaning Xcode DerivedData & Archives ---"
-      rm -rf ~/Library/Developer/Xcode/DerivedData/* || true
-      rm -rf ~/Library/Developer/Xcode/Archives/* || true
+          echo "--- 2. Cleaning Xcode DerivedData & Archives ---"
+          rm -rf ~/Library/Developer/Xcode/DerivedData/* || true
+          rm -rf ~/Library/Developer/Xcode/Archives/* || true
 
-      echo "--- 3. Removing unused pre-installed heavy tools ---"
-      sudo rm -rf /usr/local/lib/android || true
-      sudo rm -rf /opt/android || true
-      sudo rm -rf /usr/local/share/boost || true
+          echo "--- 3. Removing unused pre-installed heavy tools ---"
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/android || true
+          sudo rm -rf /usr/local/share/boost || true
 
-      echo "--- 4. Cleaning .NET & NuGet Caches ---"
-      dotnet nuget locals all --clear || true
+          echo "--- 4. Cleaning .NET & NuGet Caches ---"
+          dotnet nuget locals all --clear || true
 
-      echo "--- 5. Cleaning Homebrew & Package Caches ---"
-      brew cleanup --prune=all || true
-      rm -rf ~/Library/Caches/Homebrew/* || true
-      rm -rf ~/Library/Caches/pip/* || true
-      rm -rf ~/.npm/_cacache || true
+          echo "--- 5. Cleaning Homebrew & Package Caches ---"
+          brew cleanup --prune=all || true
+          rm -rf ~/Library/Caches/Homebrew/* || true
+          rm -rf ~/Library/Caches/pip/* || true
+          rm -rf ~/.npm/_cacache || true
 
-      echo "=== Disk space after cleanup ==="
-      df -h
+          echo "=== Disk space after cleanup ==="
+          df -h
 
-  # 3. Python
-  - name: Setup Python
-    uses: actions/setup-python@v5
-    with:
-      python-version: "3.12"
+      # 3. Python
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-  # 4. .NET
-  - name: Setup .NET 10
-    uses: actions/setup-dotnet@v4
-    with:
-      dotnet-version: "10.0.x"
+      # 4. .NET
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
 
-  # 5. Xcode
-  - name: Check Xcode and Metal Toolchain
-    run: |
-      set -euo pipefail
+      # 5. Xcode
+      - name: Check Xcode and Metal Toolchain
+        run: |
+          set -euo pipefail
 
-      xcodebuild -version
-      xcodebuild -downloadComponent MetalToolchain
+          xcodebuild -version
+          xcodebuild -downloadComponent MetalToolchain
 
-  # 6. Dependencies
-  - name: Install build dependencies
-    run: |
-      set -euo pipefail
+      # 6. Dependencies
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
 
-      brew install xcodegen zstd glslang
+          brew install xcodegen zstd glslang
 
-      dotnet --version
-      xcodegen --version
+          dotnet --version
+          xcodegen --version
 
-      python -m pip install --upgrade pip
+          python -m pip install --upgrade pip
 
-      python -m pip install \
-        lz4 \
-        capstone \
-        fonttools \
-        nsz \
-        "backports.zstd; python_version < '3.14'"
+          python -m pip install \
+            lz4 \
+            capstone \
+            fonttools \
+            nsz \
+            "backports.zstd; python_version < '3.14'"
 
-  # 7. Google Drive downloader
-  - name: Install Google Drive downloader
-    run: |
-      set -euo pipefail
-      python -m pip install gdown
+      # 7. Google Drive downloader
+      - name: Install Google Drive downloader
+        run: |
+          set -euo pipefail
+          python -m pip install gdown
 
-  # 8. Prepare prod.keys
-  - name: Prepare prod.keys
-    env:
-      PROD_KEYS: ${{ secrets.PROD_KEYS }}
-    run: |
-      set -euo pipefail
+      # 8. Prepare prod.keys
+      - name: Prepare prod.keys
+        env:
+          PROD_KEYS: ${{ secrets.PROD_KEYS }}
+        run: |
+          set -euo pipefail
 
-      if [ -z "$PROD_KEYS" ]; then
-        echo "ERROR: PROD_KEYS secret is missing"
-        exit 1
-      fi
+          if [ -z "$PROD_KEYS" ]; then
+            echo "ERROR: PROD_KEYS secret is missing"
+            exit 1
+          fi
 
-      printf '%s' "$PROD_KEYS" > "$RUNNER_TEMP/prod.keys"
-      chmod 600 "$RUNNER_TEMP/prod.keys"
+          printf '%s' "$PROD_KEYS" > "$RUNNER_TEMP/prod.keys"
+          chmod 600 "$RUNNER_TEMP/prod.keys"
 
-      echo "prod.keys prepared"
+          echo "prod.keys prepared"
 
-  # 9. Download Naruto Storm 4 NSP
-  - name: Download Naruto Storm 4 NSP
-    run: |
-      set -euo pipefail
+      # 9. Download Naruto Storm 4 NSP
+      - name: Download Naruto Storm 4 NSP
+        run: |
+          set -euo pipefail
 
-      FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
+          FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
 
-      mkdir -p "$RUNNER_TEMP/storm4"
+          mkdir -p "$RUNNER_TEMP/storm4"
 
-      echo "Downloading Naruto Storm 4 NSP..."
+          echo "Downloading Naruto Storm 4 NSP..."
 
-      gdown \
-        "https://drive.google.com/uc?id=${FILE_ID}" \
-        -O "$RUNNER_TEMP/storm4/NarutoStorm4.nsp" \
-        --retries 3 \
-        --timeout 120
+          gdown \
+            "https://drive.google.com/uc?id=${FILE_ID}" \
+            -O "$RUNNER_TEMP/storm4/NarutoStorm4.nsp" \
+            --retries 3 \
+            --timeout 120
 
-      test -s "$RUNNER_TEMP/storm4/NarutoStorm4.nsp"
+          test -s "$RUNNER_TEMP/storm4/NarutoStorm4.nsp"
 
-      SIZE=$(stat -f%z "$RUNNER_TEMP/storm4/NarutoStorm4.nsp")
+          SIZE=$(stat -f%z "$RUNNER_TEMP/storm4/NarutoStorm4.nsp")
 
-      echo "NSP size: $SIZE bytes"
+          echo "NSP size: $SIZE bytes"
 
-      if [ "$SIZE" -lt 1000000000 ]; then
-        echo "ERROR: NSP file is too small"
-        exit 1
-      fi
+          if [ "$SIZE" -lt 1000000000 ]; then
+            echo "ERROR: NSP file is too small"
+            exit 1
+          fi
 
-      MAGIC=$(head -c 4 "$RUNNER_TEMP/storm4/NarutoStorm4.nsp")
+          MAGIC=$(head -c 4 "$RUNNER_TEMP/storm4/NarutoStorm4.nsp")
 
-      if [ "$MAGIC" != "PFS0" ]; then
-        echo "ERROR: Invalid NSP container"
-        echo "Detected magic: $MAGIC"
-        exit 1
-      fi
+          if [ "$MAGIC" != "PFS0" ]; then
+            echo "ERROR: Invalid NSP container"
+            echo "Detected magic: $MAGIC"
+            exit 1
+          fi
 
-      echo "NSP validation passed"
+          echo "NSP validation passed"
 
-  # 10. Download existing Dump ZIP
-  - name: Download Existing Naruto Storm 4 Dump
-    run: |
-      set -euo pipefail
+      # 10. Download existing Dump ZIP
+      - name: Download Existing Naruto Storm 4 Dump
+        run: |
+          set -euo pipefail
 
-      FILE_ID="1xO7unR0DIehYuVKzLvH5s0h4KxyCtw4z"
+          FILE_ID="1xO7unR0DIehYuVKzLvH5s0h4KxyCtw4z"
 
-      echo "Downloading existing Dump ZIP..."
+          echo "Downloading existing Dump ZIP..."
 
-      gdown \
-        "https://drive.google.com/uc?id=${FILE_ID}" \
-        -O "$RUNNER_TEMP/naruto-dump.zip" \
-        --retries 3 \
-        --timeout 120
+          gdown \
+            "https://drive.google.com/uc?id=${FILE_ID}" \
+            -O "$RUNNER_TEMP/naruto-dump.zip" \
+            --retries 3 \
+            --timeout 120
 
-      test -s "$RUNNER_TEMP/naruto-dump.zip"
+          test -s "$RUNNER_TEMP/naruto-dump.zip"
 
-      if ! python3 -c \
-        "import zipfile,sys; sys.exit(0 if zipfile.is_zipfile(sys.argv[1]) else 1)" \
-        "$RUNNER_TEMP/naruto-dump.zip"; then
-        echo "ERROR: Downloaded Dump is not a valid ZIP file"
-        exit 1
-      fi
+          if ! python3 -c \
+            "import zipfile,sys; sys.exit(0 if zipfile.is_zipfile(sys.argv[1]) else 1)" \
+            "$RUNNER_TEMP/naruto-dump.zip"; then
+            echo "ERROR: Downloaded Dump is not a valid ZIP file"
+            exit 1
+          fi
 
-      ls -lh "$RUNNER_TEMP/naruto-dump.zip"
+          ls -lh "$RUNNER_TEMP/naruto-dump.zip"
 
-  # 11. Prepare NXNative extraction cache
-  - name: Prepare NXNative Extraction Cache
-    run: |
-      set -euo pipefail
+      # 11. Prepare NXNative extraction cache
+      - name: Prepare NXNative Extraction Cache
+        run: |
+          set -euo pipefail
 
-      python3 - <<'PY'
-      import os
-      import zipfile
-      import shutil
-      from pathlib import Path
+          python3 - <<'PY'
+          import os
+          import zipfile
+          import shutil
+          from pathlib import Path
 
-      temp = Path(os.environ["RUNNER_TEMP"])
-      archive = temp / "naruto-dump.zip"
+          temp = Path(os.environ["RUNNER_TEMP"])
+          archive = temp / "naruto-dump.zip"
 
-      cache = (
-          temp
-          / "storm4"
-          / "01003F800CF5C000_build"
-          / "extract"
-          / "v0"
-      )
+          cache = (
+              temp
+              / "storm4"
+              / "01003F800CF5C000_build"
+              / "extract"
+              / "v0"
+          )
 
-      cache.mkdir(parents=True, exist_ok=True)
+          cache.mkdir(parents=True, exist_ok=True)
 
-      def norm(value):
-          return value.replace("\\", "/").strip("/")
+          def norm(value):
+              return value.replace("\\", "/").strip("/")
 
-      print("Opening Dump ZIP...")
+          print("Opening Dump ZIP...")
 
-      with zipfile.ZipFile(archive) as z:
-          entries = z.infolist()
+          with zipfile.ZipFile(archive) as z:
+              entries = z.infolist()
 
-          def unique(suffix):
-              matches = [
+              def unique(suffix):
+                  matches = [
+                      item for item in entries
+                      if not item.is_dir()
+                      and norm(item.filename).lower().endswith(
+                          suffix.lower()
+                      )
+                  ]
+
+                  if len(matches) != 1:
+                      raise RuntimeError(
+                          f"Expected one {suffix}, found {len(matches)}"
+                      )
+
+                  return matches[0]
+
+              main = unique("exefs/main")
+              romfs = unique("romfs.img")
+              control = unique("control.nacp")
+
+              prefix = norm(main.filename).rsplit("/", 1)[0] + "/"
+
+              print("ExeFS prefix:", prefix)
+              print("Main file:", main.filename)
+              print("RomFS file:", romfs.filename)
+              print("Control file:", control.filename)
+
+              # Extract ExeFS files
+              for item in entries:
+                  name = norm(item.filename)
+
+                  if item.is_dir() or not name.startswith(prefix):
+                      continue
+
+                  relative = name[len(prefix):]
+                  rel = Path(relative)
+
+                  if rel.is_absolute() or ".." in rel.parts:
+                      raise RuntimeError(
+                          f"Unsafe ZIP path: {item.filename}"
+                      )
+
+                  destination = cache / "ExeFS" / rel
+
+                  destination.parent.mkdir(
+                      parents=True,
+                      exist_ok=True
+                  )
+
+                  with z.open(item) as source:
+                      with destination.open("wb") as target:
+                          shutil.copyfileobj(
+                              source,
+                              target,
+                              8 * 1024 * 1024
+                          )
+
+                  if destination.stat().st_size != item.file_size:
+                      raise RuntimeError(
+                          f"Size mismatch: {destination}"
+                      )
+
+              # Extract RomFS and control data
+              for item, destination in [
+                  (romfs, cache / "RomFS.img"),
+                  (control, cache / "control.nacp"),
+              ]:
+                  with z.open(item) as source:
+                      with destination.open("wb") as target:
+                          shutil.copyfileobj(
+                              source,
+                              target,
+                              8 * 1024 * 1024
+                          )
+
+                  if destination.stat().st_size != item.file_size:
+                      raise RuntimeError(
+                          f"Size mismatch: {destination}"
+                      )
+
+              # Icon is optional
+              icons = [
                   item for item in entries
                   if not item.is_dir()
-                  and norm(item.filename).lower().endswith(
-                      suffix.lower()
-                  )
+                  and norm(item.filename).lower().endswith("icon.jpg")
               ]
 
-              if len(matches) != 1:
-                  raise RuntimeError(
-                      f"Expected one {suffix}, found {len(matches)}"
-                  )
+              if len(icons) == 1:
+                  with z.open(icons[0]) as source:
+                      with (cache / "icon.jpg").open("wb") as target:
+                          shutil.copyfileobj(source, target)
 
-              return matches[0]
-
-          main = unique("exefs/main")
-          romfs = unique("romfs.img")
-          control = unique("control.nacp")
-
-          prefix = norm(main.filename).rsplit("/", 1)[0] + "/"
-
-          print("ExeFS prefix:", prefix)
-          print("Main file:", main.filename)
-          print("RomFS file:", romfs.filename)
-          print("Control file:", control.filename)
-
-          # Extract ExeFS files
-          for item in entries:
-              name = norm(item.filename)
-
-              if item.is_dir() or not name.startswith(prefix):
-                  continue
-
-              relative = name[len(prefix):]
-              rel = Path(relative)
-
-              if rel.is_absolute() or ".." in rel.parts:
-                  raise RuntimeError(
-                      f"Unsafe ZIP path: {item.filename}"
-                  )
-
-              destination = cache / "ExeFS" / rel
-
-              destination.parent.mkdir(
-                  parents=True,
-                  exist_ok=True
-              )
-
-              with z.open(item) as source:
-                  with destination.open("wb") as target:
-                      shutil.copyfileobj(
-                          source,
-                          target,
-                          8 * 1024 * 1024
-                      )
-
-              if destination.stat().st_size != item.file_size:
-                  raise RuntimeError(
-                      f"Size mismatch: {destination}"
-                  )
-
-          # Extract RomFS and control data
-          for item, destination in [
-              (romfs, cache / "RomFS.img"),
-              (control, cache / "control.nacp"),
-          ]:
-              with z.open(item) as source:
-                  with destination.open("wb") as target:
-                      shutil.copyfileobj(
-                          source,
-                          target,
-                          8 * 1024 * 1024
-                      )
-
-              if destination.stat().st_size != item.file_size:
-                  raise RuntimeError(
-                      f"Size mismatch: {destination}"
-                  )
-
-          # Icon is optional
-          icons = [
-              item for item in entries
-              if not item.is_dir()
-              and norm(item.filename).lower().endswith("icon.jpg")
+          # Verify required files
+          required = [
+              cache / "ExeFS" / "main",
+              cache / "ExeFS" / "main.npdm",
+              cache / "RomFS.img",
+              cache / "control.nacp",
           ]
 
-          if len(icons) == 1:
-              with z.open(icons[0]) as source:
-                  with (cache / "icon.jpg").open("wb") as target:
-                      shutil.copyfileobj(source, target)
+          for path in required:
+              if not path.is_file():
+                  raise RuntimeError(
+                      f"Missing required file: {path}"
+                  )
 
-      # Verify required files
-      required = [
-          cache / "ExeFS" / "main",
-          cache / "ExeFS" / "main.npdm",
-          cache / "RomFS.img",
-          cache / "control.nacp",
-      ]
+          print("\n=== Existing Dump prepared ===")
 
-      for path in required:
-          if not path.is_file():
-              raise RuntimeError(
-                  f"Missing required file: {path}"
+          for path in required:
+              print(path, path.stat().st_size, "bytes")
+
+          print("\nCache:", cache)
+          PY
+
+          rm -f "$RUNNER_TEMP/naruto-dump.zip"
+
+          echo "Temporary Dump ZIP removed"
+          df -h
+
+      # 12. Validate cached RomFS
+      - name: Validate Cached RomFS
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import sys
+          import os
+          from pathlib import Path
+
+          sys.path.insert(0, "dm/tools")
+          import romfs
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+
+          dump = (
+              temp
+              / "storm4"
+              / "01003F800CF5C000_build"
+              / "extract"
+              / "v0"
+          )
+
+          image = dump / "RomFS.img"
+
+          if not image.is_file():
+              raise SystemExit("RomFS.img missing")
+
+          if image.stat().st_size <= 8:
+              raise SystemExit("RomFS.img is empty or too small")
+
+          with image.open("rb") as f:
+              magic = f.read(8)
+
+          if magic != b"DMROMFS1":
+              raise SystemExit(
+                  f"Invalid custom RomFS image header: {magic!r}"
               )
 
-      print("\n=== Existing Dump prepared ===")
+          marker = "data/sim/stage2.cpk"
 
-      for path in required:
-          print(path, path.stat().st_size, "bytes")
+          root = romfs.source(dump)
+          marker_path = root / marker
 
-      print("\nCache:", cache)
-      PY
+          if not marker_path.exists():
+              raise SystemExit(
+                  f"RomFS marker not found: {marker}"
+              )
 
-      rm -f "$RUNNER_TEMP/naruto-dump.zip"
+          print("DMROMFS1 header verified")
+          print("RomFS marker verified:", marker)
+          print("Marker path:", marker_path)
+          print("Existing Dump is ready for NXNative reuse")
+          PY
 
-      echo "Temporary Dump ZIP removed"
-      df -h
+      # 13. Build IPA using existing Dump
+      - name: Build Unsigned iOS IPA
+        run: |
+          set -euo pipefail
 
-  # 12. Validate cached RomFS
-  - name: Validate Cached RomFS
-    run: |
-      set -euo pipefail
+          python3 scripts/build_ipa_from_nsp.py \
+            "$RUNNER_TEMP/storm4" \
+            -k "$RUNNER_TEMP/prod.keys" \
+            --package v0 \
+            -o "$RUNNER_TEMP/NarutoStorm4.ipa" \
+            --romfs separate \
+            --keep-extracted \
+            --allow-other-metal \
+            --progress lines \
+            2>&1 | tee "$RUNNER_TEMP/storm4-build.log"
 
-      python3 - <<'PY'
-      import sys
-      import os
-      from pathlib import Path
+          echo "Checking existing Dump reuse..."
 
-      sys.path.insert(0, "dm/tools")
-      import romfs
+          if ! grep -qi "reusing the extracted v0" \
+            "$RUNNER_TEMP/storm4-build.log"; then
+            echo "ERROR: NXNative did not reuse the existing Dump"
+            exit 1
+          fi
 
-      temp = Path(os.environ["RUNNER_TEMP"])
+          if [ ! -s "$RUNNER_TEMP/NarutoStorm4.ipa" ]; then
+            echo "ERROR: IPA was not created"
+            exit 1
+          fi
 
-      dump = (
-          temp
-          / "storm4"
-          / "01003F800CF5C000_build"
-          / "extract"
-          / "v0"
-      )
+          ROMFS="$RUNNER_TEMP/storm4/01003F800CF5C000_build/extract/v0/RomFS.img"
 
-      image = dump / "RomFS.img"
+          if [ ! -s "$ROMFS" ]; then
+            echo "ERROR: Separate RomFS image is missing"
+            exit 1
+          fi
 
-      if not image.is_file():
-          raise SystemExit("RomFS.img missing")
+          echo "=== IPA BUILD SUCCESS ==="
+          ls -lh "$RUNNER_TEMP/NarutoStorm4.ipa"
 
-      if image.stat().st_size <= 8:
-          raise SystemExit("RomFS.img is empty or too small")
+          echo "=== SEPARATE ROMFS ==="
+          ls -lh "$ROMFS"
 
-      with image.open("rb") as f:
-          magic = f.read(8)
+      # 14. Upload IPA
+      - name: Upload Naruto Storm 4 IPA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Naruto-Storm4-iOS-IPA
+          path: ${{ runner.temp }}/NarutoStorm4.ipa
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: ignore
 
-      if magic != b"DMROMFS1":
-          raise SystemExit(
-              f"Invalid custom RomFS image header: {magic!r}"
-          )
+      # 15. Upload separate RomFS
+      - name: Upload Naruto Storm 4 RomFS
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Naruto-Storm4-RomFS
+          path: ${{ runner.temp }}/storm4/01003F800CF5C000_build/extract/v0/RomFS.img
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: ignore
 
-      # Marker confirmed in the previous successful RomFS validation.
-      marker = "data/sim/stage2.cpk"
+      # 16. Upload build logs and generated profile
+      - name: Upload Build Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Naruto-Storm4-Build-Logs
+          path: |
+            ${{ runner.temp }}/storm4-build.log
+            ${{ runner.temp }}/storm4/01003F800CF5C000_build/logs/
+            ${{ runner.temp }}/storm4/01003F800CF5C000_build/profile/
+            ${{ runner.temp }}/storm4/01003F800CF5C000_survey/
+          retention-days: 7
+          if-no-files-found: ignore
 
-      root = romfs.source(dump)
-      marker_path = root / marker
+      # 17. Cleanup sensitive files
+      - name: Remove Sensitive Temporary Files
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/prod.keys"
 
-      if not marker_path.exists():
-          raise SystemExit(
-              f"RomFS marker not found: {marker}"
-          )
-
-      print("DMROMFS1 header verified")
-      print("RomFS marker verified:", marker)
-      print("Marker path:", marker_path)
-      print("Existing Dump is ready for NXNative reuse")
-      PY
-
-  # 13. Build IPA using existing Dump
-  - name: Build Unsigned iOS IPA
-    run: |
-      set -euo pipefail
-
-      python3 scripts/build_ipa_from_nsp.py \
-        "$RUNNER_TEMP/storm4" \
-        -k "$RUNNER_TEMP/prod.keys" \
-        --package v0 \
-        -o "$RUNNER_TEMP/NarutoStorm4.ipa" \
-        --romfs separate \
-        --keep-extracted \
-        --allow-other-metal \
-        --progress lines \
-        2>&1 | tee "$RUNNER_TEMP/storm4-build.log"
-
-      echo "Checking existing Dump reuse..."
-
-      if ! grep -qi "reusing the extracted v0" \
-        "$RUNNER_TEMP/storm4-build.log"; then
-        echo "ERROR: NXNative did not reuse the existing Dump"
-        exit 1
-      fi
-
-      if [ ! -s "$RUNNER_TEMP/NarutoStorm4.ipa" ]; then
-        echo "ERROR: IPA was not created"
-        exit 1
-      fi
-
-      ROMFS="$RUNNER_TEMP/storm4/01003F800CF5C000_build/extract/v0/RomFS.img"
-
-      if [ ! -s "$ROMFS" ]; then
-        echo "ERROR: Separate RomFS image is missing"
-        exit 1
-      fi
-
-      echo "=== IPA BUILD SUCCESS ==="
-      ls -lh "$RUNNER_TEMP/NarutoStorm4.ipa"
-
-      echo "=== SEPARATE ROMFS ==="
-      ls -lh "$ROMFS"
-
-  # 14. Upload IPA
-  - name: Upload Naruto Storm 4 IPA
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: Naruto-Storm4-iOS-IPA
-      path: ${{ runner.temp }}/NarutoStorm4.ipa
-      compression-level: 0
-      retention-days: 7
-      if-no-files-found: ignore
-
-  # 15. Upload separate RomFS
-  - name: Upload Naruto Storm 4 RomFS
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: Naruto-Storm4-RomFS
-      path: ${{ runner.temp }}/storm4/01003F800CF5C000_build/extract/v0/RomFS.img
-      compression-level: 0
-      retention-days: 7
-      if-no-files-found: ignore
-
-  # 16. Upload build logs and generated profile
-  - name: Upload Build Logs
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: Naruto-Storm4-Build-Logs
-      path: |
-        ${{ runner.temp }}/storm4-build.log
-        ${{ runner.temp }}/storm4/01003F800CF5C000_build/logs/
-        ${{ runner.temp }}/storm4/01003F800CF5C000_build/profile/
-        ${{ runner.temp }}/storm4/01003F800CF5C000_survey/
-      retention-days: 7
-      if-no-files-found: ignore
-
-  # 17. Cleanup sensitive files
-  - name: Remove Sensitive Temporary Files
-    if: always()
-    run: |
-      rm -f "$RUNNER_TEMP/prod.keys"
-
-      echo "Temporary sensitive files removed"
+          echo "Temporary sensitive files removed"
