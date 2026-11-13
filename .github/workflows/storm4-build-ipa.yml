@@ -28,14 +28,28 @@ jobs:
           echo "=== Disk space before cleanup ==="
           df -h
 
+          echo "--- 1. Cleaning Xcode Simulators & Runtimes ---"
           xcrun simctl delete unavailable || true
-          rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
+          rm -rf ~/Library/Developer/CoreSimulator/Devices/* || true
 
+          echo "--- 2. Cleaning Xcode DerivedData & Archives ---"
+          rm -rf ~/Library/Developer/Xcode/DerivedData/* || true
+          rm -rf ~/Library/Developer/Xcode/Archives/* || true
+
+          echo "--- 3. Removing unused pre-installed heavy tools (Android SDK & Boost) ---"
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/android || true
+          sudo rm -rf /usr/local/share/boost || true
+
+          echo "--- 4. Cleaning .NET & NuGet Caches ---"
+          dotnet nuget locals all --clear || true
+
+          echo "--- 5. Cleaning Homebrew & Package Caches ---"
           brew cleanup --prune=all || true
           rm -rf ~/Library/Caches/Homebrew/* || true
           rm -rf ~/Library/Caches/pip/* || true
-
-          sudo rm -rf /usr/local/share/boost || true
+          rm -rf ~/.npm/_cacache || true
 
           echo "=== Disk space after cleanup ==="
           df -h
@@ -172,7 +186,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          FILE_ID="1xO7unR0DIehYuVKzLvH5s0h4KxyCtw4z"
+          FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
 
           echo "Downloading existing Dump ZIP..."
 
@@ -186,7 +200,7 @@ jobs:
 
           ls -lh "$RUNNER_TEMP/naruto-dump.zip"
 
-      # 13. Extract directly into NXNative cache
+      # 13. Extract directly into NXNative cache & remove ZIP immediately
       - name: Prepare NXNative Extraction Cache
         run: |
           set -euo pipefail
@@ -325,6 +339,11 @@ jobs:
           print("\nCache:", cache)
           PY
 
+          # ลบไฟล์ ZIP ทันทีหลังแตกไฟล์เสร็จเพื่อคืนพื้นที่
+          rm -f "$RUNNER_TEMP/naruto-dump.zip"
+          echo "Temporary Dump ZIP removed immediately"
+          df -h
+
       # 14. Validate the custom RomFS image and marker
       - name: Validate Cached RomFS
         run: |
@@ -373,17 +392,7 @@ jobs:
           print("Existing Dump is ready for NXNative reuse")
           PY
 
-      # 15. Remove temporary ZIP
-      - name: Remove Temporary Dump ZIP
-        run: |
-          set -euo pipefail
-
-          rm -f "$RUNNER_TEMP/naruto-dump.zip"
-
-          echo "Temporary Dump ZIP removed"
-          df -h
-
-      # 16. Build IPA using existing Dump
+      # 15. Build IPA using existing Dump
       - name: Build Unsigned iOS IPA
         env:
           DM_GAMES_DIR: ${{ runner.temp }}/profile
@@ -419,7 +428,7 @@ jobs:
           echo "=== IPA BUILD SUCCESS ==="
           ls -lh "$RUNNER_TEMP/NarutoStorm4.ipa"
 
-      # 17. Upload IPA
+      # 16. Upload IPA
       - name: Upload Naruto Storm 4 IPA
         if: always()
         uses: actions/upload-artifact@v4
@@ -430,7 +439,7 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # 18. Upload logs and profile
+      # 17. Upload Build Logs
       - name: Upload Build Logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -444,7 +453,7 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # 19. Cleanup sensitive files
+      # 18. Cleanup sensitive files
       - name: Remove Sensitive Temporary Files
         if: always()
         run: |
