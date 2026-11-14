@@ -11,8 +11,26 @@
 #include <time.h>
 #include <stdatomic.h>
 
+#include <TargetConditionals.h>
 #include <mach/mach.h>
+
+#if TARGET_OS_IPHONE
+
+#include <mach/vm_map.h>
+
+typedef vm_address_t mach_vm_address_t;
+typedef vm_size_t mach_vm_size_t;
+
+#define mach_vm_allocate   vm_allocate
+#define mach_vm_protect    vm_protect
+#define mach_vm_deallocate vm_deallocate
+
+#else
+
 #include <mach/mach_vm.h>
+#include <mach/vm_map.h>
+
+#endif
 
 #include <stdlib.h>
 #include <stdint.h>
