@@ -18,14 +18,65 @@
 
 #include <mach/vm_map.h>
 
-typedef vm_address_t mach_vm_address_t;
-typedef vm_size_t mach_vm_size_t;
+static inline kern_return_t dm_mach_vm_allocate_compat(
+    mach_port_t task,
+    mach_vm_address_t *address,
+    mach_vm_size_t size,
+    int flags
+) {
+    vm_address_t vm_addr = (vm_address_t)*address;
 
-#define mach_vm_allocate   vm_allocate
-#define mach_vm_protect    vm_protect
-#define mach_vm_deallocate vm_deallocate
+    kern_return_t result = vm_allocate(
+        task,
+        &vm_addr,
+        (vm_size_t)size,
+        flags
+    );
+
+    if (result == KERN_SUCCESS)
+        *address = (mach_vm_address_t)vm_addr;
+
+    return result;
+}
+
+static inline kern_return_t dm_mach_vm_protect_compat(
+    mach_port_t task,
+    mach_vm_address_t address,
+    mach_vm_size_t size,
+    boolean_t set_maximum,
+    vm_prot_t protection
+) {
+    return vm_protect(
+        task,
+        (vm_address_t)address,
+        (vm_size_t)size,
+        set_maximum,
+        protection
+    );
+}
+
+static inline kern_return_t dm_mach_vm_deallocate_compat(
+    mach_port_t task,
+    mach_vm_address_t address,
+    mach_vm_size_t size
+) {
+    return vm_deallocate(
+        task,
+        (vm_address_t)address,
+        (vm_size_t)size
+    );
+}
+
+#define mach_vm_allocate   dm_mach_vm_allocate_compat
+#define mach_vm_protect    dm_mach_vm_protect_compat
+#define mach_vm_deallocate dm_mach_vm_deallocate_compat
 
 #else
+
+#include <mach/mach_vm.h>
+#include <mach/vm_map.h>
+
+#endif
 
 #include <mach/mach_vm.h>
 #include <mach/vm_map.h>
