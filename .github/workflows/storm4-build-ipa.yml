@@ -87,12 +87,11 @@ jobs:
           chmod 600 "$RUNNER_TEMP/prod.keys"
           echo "prod.keys prepared"
 
-      # Naruto Storm 4 NSP - New Google Drive ID
       - name: Download Naruto Storm 4 NSP
         run: |
           set -euo pipefail
 
-          FILE_ID="1axB1GqjfoXcF4kZ9qhv1o5cnfAu2O7UG"
+          FILE_ID="15ca5hklaFU1wS1mq4dwrLSeoUpB7xmqh"
 
           mkdir -p "$RUNNER_TEMP/storm4"
 
@@ -124,7 +123,6 @@ jobs:
 
           echo "NSP validation passed"
 
-      # Existing Dump ZIP - Keep Previous ID
       - name: Download Existing Naruto Storm 4 Dump
         run: |
           set -euo pipefail
